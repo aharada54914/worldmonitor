@@ -16,6 +16,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
     image: worldmonitor:latest
     container_name: worldmonitor
     ports:
@@ -32,6 +34,7 @@ services:
       LLM_API_KEY: "${LLM_API_KEY:-}"
       LLM_MODEL: "${LLM_MODEL:-}"
       GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       # Data source API keys (optional — features degrade gracefully)
       AISSTREAM_API_KEY: "${AISSTREAM_API_KEY:-}"
       FINNHUB_API_KEY: "${FINNHUB_API_KEY:-}"
@@ -41,6 +44,12 @@ services:
       NASA_FIRMS_API_KEY: "${NASA_FIRMS_API_KEY:-}"
       CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
       AVIATIONSTACK_API: "${AVIATIONSTACK_API:-}"
+      # Discord periodic notifications via Gemini
+      DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-gemini-2.0-flash}"
+      DISCORD_NOTIFY_INTERVAL_MINUTES: "${DISCORD_NOTIFY_INTERVAL_MINUTES:-60}"
+      DISCORD_NOTIFY_LANGUAGE: "${DISCORD_NOTIFY_LANGUAGE:-ja}"
     # Docker secrets (recommended for API keys — keeps them out of docker inspect).
     # Create secrets/ dir with one file per key, then uncomment below.
     # See SELF_HOSTING.md or docker-compose.override.yml for details.
@@ -51,36 +60,70 @@ services:
     #   - FRED_API_KEY
     #   - NASA_FIRMS_API_KEY
     #   - LLM_API_KEY
+    #   - GEMINI_API_KEY
+    #   - DISCORD_WEBHOOK_URL
     depends_on:
       redis-rest:
         condition: service_started
       ais-relay:
         condition: service_started
     restart: unless-stopped
+    mem_limit: 2g
+    memswap_limit: 2g
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   ais-relay:
     build:
       context: .
       dockerfile: Dockerfile.relay
+      platforms:
+        - linux/arm64
     image: worldmonitor-ais-relay:latest
     container_name: worldmonitor-ais-relay
     environment:
       AISSTREAM_API_KEY: "${AISSTREAM_API_KEY:-}"
       PORT: "3004"
     restart: unless-stopped
+    mem_limit: 3g
+    memswap_limit: 3g
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   redis:
     image: docker.io/redis:7-alpine
     container_name: worldmonitor-redis
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: >
+      redis-server
+      --maxmemory 1gb
+      --maxmemory-policy allkeys-lru
+      --save 300 100
+      --save 60 1000
+      --appendonly yes
+      --appendfsync everysec
     volumes:
       - redis-data:/data
     restart: unless-stopped
+    mem_limit: 1200m
+    memswap_limit: 1200m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis-rest:
     build:
       context: docker
       dockerfile: Dockerfile.redis-rest
+      platforms:
+        - linux/arm64
     image: worldmonitor-redis-rest:latest
     container_name: worldmonitor-redis-rest
     ports:
@@ -91,6 +134,13 @@ services:
     depends_on:
       - redis
     restart: unless-stopped
+    mem_limit: 256m
+    memswap_limit: 256m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 # Docker secrets — uncomment and point to your secret files.
 # Example: echo "gsk_abc123" > secrets/groq_api_key.txt
@@ -107,6 +157,10 @@ services:
 #     file: ./secrets/nasa_firms_api_key.txt
 #   LLM_API_KEY:
 #     file: ./secrets/llm_api_key.txt
+#   GEMINI_API_KEY:
+#     file: ./secrets/gemini_api_key.txt
+#   DISCORD_WEBHOOK_URL:
+#     file: ./secrets/discord_webhook_url.txt
 
 volumes:
   redis-data:

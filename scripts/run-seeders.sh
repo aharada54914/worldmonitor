@@ -27,23 +27,54 @@ if [ -f "$OVERRIDE" ]; then
   . "$_env_tmp"
   rm -f "$_env_tmp"
 fi
+
 ok=0 fail=0 skip=0
 
-for f in "$SCRIPT_DIR"/seed-*.mjs; do
+# Run a single seed script with exponential-backoff retry.
+# Returns 0 on success, 1 on permanent failure, 2 on skip.
+run_with_retry() {
+  f="$1"
   name="$(basename "$f")"
-  printf "→ %s ... " "$name"
-  output=$(node "$f" 2>&1)
-  rc=$?
-  last=$(echo "$output" | tail -1)
+  max_attempts=3
+  attempt=1
 
-  if echo "$last" | grep -qi "skip\|not set\|missing.*key\|not found"; then
-    printf "SKIP (%s)\n" "$last"
-    skip=$((skip + 1))
-  elif [ $rc -eq 0 ]; then
-    printf "OK\n"
+  while [ $attempt -le $max_attempts ]; do
+    output=$(node "$f" 2>&1)
+    rc=$?
+    last=$(echo "$output" | tail -1)
+
+    if echo "$last" | grep -qi "skip\|not set\|missing.*key\|not found"; then
+      printf "→ %s ... SKIP (%s)\n" "$name" "$last"
+      return 2
+    elif [ $rc -eq 0 ]; then
+      if [ $attempt -gt 1 ]; then
+        printf "→ %s ... OK (attempt %d/%d)\n" "$name" "$attempt" "$max_attempts"
+      else
+        printf "→ %s ... OK\n" "$name"
+      fi
+      return 0
+    else
+      if [ $attempt -lt $max_attempts ]; then
+        delay=$((attempt * attempt))  # 1s, 4s (exponential backoff)
+        printf "→ %s ... RETRY %d/%d in %ds (%s)\n" "$name" "$attempt" "$max_attempts" "$delay" "$last"
+        sleep "$delay"
+      else
+        printf "→ %s ... FAIL after %d attempts (%s)\n" "$name" "$max_attempts" "$last"
+      fi
+      attempt=$((attempt + 1))
+    fi
+  done
+  return 1
+}
+
+for f in "$SCRIPT_DIR"/seed-*.mjs; do
+  run_with_retry "$f"
+  rc=$?
+  if [ $rc -eq 0 ]; then
     ok=$((ok + 1))
+  elif [ $rc -eq 2 ]; then
+    skip=$((skip + 1))
   else
-    printf "FAIL (%s)\n" "$last"
     fail=$((fail + 1))
   fi
 done

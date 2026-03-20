@@ -1569,12 +1569,63 @@ export async function createLocalApiServer(options = {}) {
   };
 }
 
+// =============================================================================
+// Structured JSON logger (Docker mode) / plain console (desktop mode)
+// =============================================================================
+function createLogger(mode) {
+  const isDocker = (mode ?? process.env.LOCAL_API_MODE ?? '').includes('docker');
+  if (!isDocker) return console;
+  const fmt = (level, msg, ...args) => {
+    const extra = args.length > 0 ? { detail: args.map(String).join(' ') } : {};
+    process.stdout.write(JSON.stringify({ level, ts: new Date().toISOString(), msg: String(msg), ...extra }) + '\n');
+  };
+  return {
+    log:   (msg, ...a) => fmt('info',  msg, ...a),
+    info:  (msg, ...a) => fmt('info',  msg, ...a),
+    warn:  (msg, ...a) => fmt('warn',  msg, ...a),
+    error: (msg, ...a) => fmt('error', msg, ...a),
+    debug: (msg, ...a) => fmt('debug', msg, ...a),
+  };
+}
+
 if (isMainModule()) {
+  const mode = process.env.LOCAL_API_MODE ?? 'desktop-sidecar';
+  const logger = createLogger(mode);
+  let app;
   try {
-    const app = await createLocalApiServer();
+    app = await createLocalApiServer({ logger });
     await app.start();
   } catch (error) {
-    console.error('[local-api] startup failed', error);
+    logger.error('[local-api] startup failed', error);
     process.exit(1);
   }
+
+  // ── Graceful Shutdown ──────────────────────────────────────────────────────
+  let isShuttingDown = false;
+
+  async function shutdown(signal) {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    logger.log(`[local-api] ${signal} received — graceful shutdown`);
+    try {
+      await app.close();
+      logger.log('[local-api] HTTP server closed');
+    } catch (err) {
+      logger.error('[local-api] error during shutdown', err.message);
+    }
+    process.exit(0);
+  }
+
+  // Force-exit safety net: if graceful close stalls for 30s, terminate anyway
+  function forceExit(signal) {
+    shutdown(signal).catch(() => {}).finally(() => {
+      setTimeout(() => {
+        process.stderr.write('[local-api] forced exit after 30s timeout\n');
+        process.exit(1);
+      }, 30_000).unref();
+    });
+  }
+
+  process.on('SIGTERM', () => forceExit('SIGTERM'));
+  process.on('SIGINT',  () => forceExit('SIGINT'));
 }
