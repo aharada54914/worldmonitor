@@ -10,7 +10,9 @@
 FROM node:22-alpine
 
 # curl required by OREF polling (Node.js JA3 fingerprint blocked by Akamai; curl passes)
-RUN apk add --no-cache curl
+# python3/make/g++ are required when ws native addons (bufferutil, utf-8-validate)
+# do not have a matching prebuilt binary for the target architecture.
+RUN apk add --no-cache curl python3 make g++
 
 WORKDIR /app
 

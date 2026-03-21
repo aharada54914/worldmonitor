@@ -97,6 +97,8 @@ To automate, add a cron job:
 */30 * * * * cd /path/to/worldmonitor && ./scripts/run-seeders.sh >> /tmp/wm-seeders.log 2>&1
 ```
 
+For 24/7 VPS operation, keep this cron job for seeders, but do not also schedule `scripts/discord-notify.mjs` from the host if the container is already running it under `supervisord`.
+
 ### 🔧 Manual seeder invocation
 
 If you prefer to run seeders individually:
@@ -204,3 +206,23 @@ services:
 | 🚢 No vessel data | Set `AISSTREAM_API_KEY` in both `worldmonitor` and `ais-relay` services |
 | 🔥 No wildfire data | Set `NASA_FIRMS_API_KEY` |
 | 🌐 No outage data | Requires `CLOUDFLARE_API_TOKEN` (paid Radar access) |
+
+## 🖥️ Hetzner VPS Operations
+
+For Hetzner Cloud, treat the VNC console as an emergency path only. Day-to-day management should happen over SSH with `systemd` and `docker compose`.
+
+```bash
+ssh root@your-server
+systemctl status worldmonitor
+journalctl -u worldmonitor -f
+docker compose ps
+docker compose logs -f worldmonitor
+systemctl reload worldmonitor
+```
+
+Recommended baseline for 24/7 uptime:
+
+- Enable Hetzner Backups or take a Snapshot before deployments.
+- Mirror allowed ports in Hetzner Cloud Firewalls; do not rely on UFW alone for Docker-published ports.
+- Use `/api/health` plus the bundled `scripts/health-check.sh` for alerting.
+- Keep Discord notifications on a single execution path to avoid duplicate posts.

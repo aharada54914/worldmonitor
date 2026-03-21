@@ -34,11 +34,11 @@ console.log(`[Relay] Heap limit: ${(_heapStats.heap_size_limit / 1024 / 1024).to
 const AISSTREAM_URL = 'wss://stream.aisstream.io/v0/stream';
 const API_KEY = process.env.AISSTREAM_API_KEY || process.env.VITE_AISSTREAM_API_KEY;
 const PORT = process.env.PORT || 3004;
+const AIS_DISABLED = !API_KEY;
 
-if (!API_KEY) {
-  console.error('[Relay] Error: AISSTREAM_API_KEY environment variable not set');
-  console.error('[Relay] Get a free key at https://aisstream.io');
-  process.exit(1);
+if (AIS_DISABLED) {
+  console.warn('[Relay] AISSTREAM_API_KEY not set; starting in disabled mode');
+  console.warn('[Relay] Set AISSTREAM_API_KEY to enable live AIS relay data');
 }
 
 const MAX_WS_CLIENTS = 10; // Cap WS clients — app uses HTTP snapshots, not WS
@@ -8302,6 +8302,7 @@ CSS variables are pre-defined in the iframe: --bg, --surface, --text, --text-sec
 // ─── End Widget Agent ────────────────────────────────────────────────────────
 
 function connectUpstream() {
+  if (AIS_DISABLED) return;
   // Skip if already connected or connecting
   if (upstreamSocket?.readyState === WebSocket.OPEN ||
       upstreamSocket?.readyState === WebSocket.CONNECTING) return;
@@ -8404,7 +8405,10 @@ function connectUpstream() {
 const wss = new WebSocketServer({ server });
 
 server.listen(PORT, () => {
-  console.log(`[Relay] WebSocket relay on port ${PORT} (OpenSky: ${OPENSKY_PROXY_ENABLED ? 'via proxy' : 'direct'})`);
+  console.log(
+    `[Relay] WebSocket relay on port ${PORT} `
+    + `(AIS: ${AIS_DISABLED ? 'disabled' : 'enabled'}, OpenSky: ${OPENSKY_PROXY_ENABLED ? 'via proxy' : 'direct'})`
+  );
   startTelegramPollLoop();
   startOrefPollLoop();
   startUcdpSeedLoop();

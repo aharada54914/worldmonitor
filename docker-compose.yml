@@ -2,6 +2,7 @@
 # World Monitor — Docker / Podman Compose
 # =============================================================================
 # Self-contained stack: app + Redis + AIS relay.
+# AIS relay stays healthy in disabled mode when AISSTREAM_API_KEY is unset.
 #
 # Quick start:
 #   cp .env.example .env        # add your API keys

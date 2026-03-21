@@ -10,6 +10,7 @@
 FROM node:22-alpine AS builder
 
 WORKDIR /app
+ENV NODE_OPTIONS=--max-old-space-size=4096
 
 # Install root dependencies (layer-cached until package.json changes)
 COPY package.json package-lock.json ./
@@ -40,6 +41,8 @@ WORKDIR /app
 # API server
 COPY --from=builder /app/src-tauri/sidecar/local-api-server.mjs ./local-api-server.mjs
 COPY --from=builder /app/src-tauri/sidecar/package.json ./package.json
+COPY --from=builder /app/scripts/discord-notify.mjs ./scripts/discord-notify.mjs
+COPY --from=builder /app/scripts/_seed-utils.mjs ./scripts/_seed-utils.mjs
 
 # API handler modules (JS originals + compiled TS bundles)
 COPY --from=builder /app/api ./api
@@ -65,8 +68,8 @@ USER appuser
 
 EXPOSE 8080
 
-# Healthcheck via nginx
+# Healthcheck checks container readiness, not seed freshness.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:8080/api/health || exit 1
+  CMD wget -q --spider http://127.0.0.1:8080/ || exit 1
 
 CMD ["/app/entrypoint.sh"]
