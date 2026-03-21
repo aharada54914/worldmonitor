@@ -78,7 +78,6 @@ import {
   CLOUD_REGIONS,
   PORTS,
   SPACEPORTS,
-  APT_GROUPS,
   CRITICAL_MINERALS,
   STOCK_EXCHANGES,
   FINANCIAL_CENTERS,
@@ -305,6 +304,8 @@ export class DeckGLMap {
   private weatherAlerts: WeatherAlert[] = [];
   private outages: InternetOutage[] = [];
   private cyberThreats: CyberThreat[] = [];
+  private aptGroups: import('@/types').APTGroup[] = [];
+  private aptGroupsLoaded = false;
   private iranEvents: IranEvent[] = [];
   private aisDisruptions: AisDisruptionEvent[] = [];
   private aisDensity: AisDensityZone[] = [];
@@ -508,6 +509,10 @@ export class DeckGLMap {
     }
     if (this.state.layers.weatherRadar) {
       this.startWeatherRadar();
+    }
+    // Kick off lazy APT load if cyberThreats is already on at init (e.g. from URL/localStorage)
+    if (this.state.layers.cyberThreats && SITE_VARIANT !== 'tech' && SITE_VARIANT !== 'happy') {
+      this.loadAptGroups();
     }
   }
 
@@ -1502,8 +1507,8 @@ export class DeckGLMap {
       layers.push(this.createCommodityPortsLayer());
     }
 
-    // APT Groups layer (geopolitical variant only - always shown, no toggle)
-    if (SITE_VARIANT !== 'tech' && SITE_VARIANT !== 'happy') {
+    // APT Groups layer — loaded lazily when cyberThreats layer is enabled
+    if (mapLayers.cyberThreats && SITE_VARIANT !== 'tech' && SITE_VARIANT !== 'happy' && this.aptGroups.length > 0) {
       layers.push(this.createAPTGroupsLayer());
     }
 
@@ -2547,19 +2552,26 @@ export class DeckGLMap {
     });
   }
 
+  private async loadAptGroups(): Promise<void> {
+    const { APT_GROUPS } = await import('@/config/apt-groups');
+    this.aptGroups = APT_GROUPS;
+    this.aptGroupsLoaded = true;
+    this.render();
+  }
+
   private createAPTGroupsLayer(): ScatterplotLayer {
     // APT Groups - cyber threat actor markers (geopolitical variant only)
     // Made subtle to avoid visual clutter - small orange dots
     return new ScatterplotLayer({
       id: 'apt-groups-layer',
-      data: APT_GROUPS,
+      data: this.aptGroups,
       getPosition: (d) => [d.lon, d.lat],
       getRadius: 6000,
-      getFillColor: [255, 140, 0, 140] as [number, number, number, number], // Subtle orange
+      getFillColor: [255, 140, 0, 140] as [number, number, number, number],
       radiusMinPixels: 4,
       radiusMaxPixels: 8,
       pickable: true,
-      stroked: false, // No outline - cleaner look
+      stroked: false,
     });
   }
 
@@ -4493,10 +4505,12 @@ export class DeckGLMap {
 
   public setLayers(layers: MapLayers): void {
     const prevRadar = this.state.layers.weatherRadar;
+    const prevCyber = this.state.layers.cyberThreats;
     this.state.layers = { ...layers };
     this.manageAircraftTimer(this.state.layers.flights);
     if (this.state.layers.weatherRadar && !prevRadar) this.startWeatherRadar();
     else if (!this.state.layers.weatherRadar && prevRadar) this.stopWeatherRadar();
+    if (this.state.layers.cyberThreats && !prevCyber && !this.aptGroupsLoaded) this.loadAptGroups();
     this.render(); // Debounced
 
     Object.entries(this.state.layers).forEach(([key, value]) => {
@@ -5533,13 +5547,13 @@ export class DeckGLMap {
     if (!this.maplibreMap) return;
     try {
       if (!this.maplibreMap.getLayer('country-highlight-fill')) return;
-    } catch { return; }
-    const rest = this.getHighlightRestOpacity();
-    const noMatch = ['==', ['get', 'ISO3166-1-Alpha-2'], ''] as maplibregl.FilterSpecification;
-    this.maplibreMap.setFilter('country-highlight-fill', noMatch);
-    this.maplibreMap.setFilter('country-highlight-border', noMatch);
-    this.maplibreMap.setPaintProperty('country-highlight-fill', 'fill-opacity', rest.fill);
-    this.maplibreMap.setPaintProperty('country-highlight-border', 'line-opacity', rest.border);
+      const rest = this.getHighlightRestOpacity();
+      const noMatch = ['==', ['get', 'ISO3166-1-Alpha-2'], ''] as maplibregl.FilterSpecification;
+      this.maplibreMap.setFilter('country-highlight-fill', noMatch);
+      this.maplibreMap.setFilter('country-highlight-border', noMatch);
+      this.maplibreMap.setPaintProperty('country-highlight-fill', 'fill-opacity', rest.fill);
+      this.maplibreMap.setPaintProperty('country-highlight-border', 'line-opacity', rest.border);
+    } catch { /* style unloaded or map torn down between panel close and highlight clear */ }
   }
 
   private pulseCountryHighlight(): void {

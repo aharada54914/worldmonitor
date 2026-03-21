@@ -230,6 +230,9 @@ export interface ListGroceryBasketPricesResponse {
   cheapestCountry: string;
   mostExpensiveCountry: string;
   upstreamUnavailable: boolean;
+  wowAvgPct: number;
+  wowAvailable: boolean;
+  prevFetchedAt: string;
 }
 
 export interface CountryBasket {
@@ -240,6 +243,7 @@ export interface CountryBasket {
   totalUsd: number;
   fxRate: number;
   items: GroceryItemPrice[];
+  wowPct: number;
 }
 
 export interface GroceryItemPrice {
@@ -261,6 +265,9 @@ export interface ListBigMacPricesResponse {
   fetchedAt: string;
   cheapestCountry: string;
   mostExpensiveCountry: string;
+  wowAvgPct: number;
+  wowAvailable: boolean;
+  prevFetchedAt: string;
 }
 
 export interface BigMacCountryPrice {
@@ -273,6 +280,7 @@ export interface BigMacCountryPrice {
   fxRate: number;
   sourceSite: string;
   available: boolean;
+  wowPct: number;
 }
 
 export interface GetNationalDebtRequest {

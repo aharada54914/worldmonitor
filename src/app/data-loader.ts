@@ -2790,6 +2790,7 @@ export class DataLoaderManager implements AppModule {
   async loadThermalEscalations(): Promise<void> {
     try {
       const result = await fetchThermalEscalations();
+      this.ctx.intelligenceCache.thermalEscalation = result;
       this.callPanel('thermal-escalation', 'setData', result);
       dataFreshness.recordUpdate('thermal-escalation' as DataSourceId, result.clusters.length);
     } catch (error) {

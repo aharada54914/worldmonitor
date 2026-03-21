@@ -161,7 +161,13 @@ export class NationalDebtPanel extends Panel {
 
     try {
       const data = await getNationalDebtData();
-      if (!this.element?.isConnected) return;
+      if (!this.element?.isConnected) {
+        // Race condition: bootstrap data resolved synchronously before lazyPanel inserted
+        // the element into the DOM. Retry after the current paint cycle.
+        this.loading = false;
+        requestAnimationFrame(() => { void this.refresh(); });
+        return;
+      }
       this.entries = data.entries ?? [];
       this.lastFetch = Date.now();
       this.applyFilters();

@@ -37,6 +37,8 @@ import {
   buildForecastCase,
   buildForecastCases,
   buildPriorForecastSnapshot,
+  buildPublishedForecastPayload,
+  buildPublishedSeedPayload,
   buildChangeItems,
   buildChangeSummary,
   annotateForecastChanges,
@@ -1056,6 +1058,41 @@ describe('forecast change tracking', () => {
     assert.equal(snapshot.calibration.marketTitle, 'Will Iran conflict escalate before July?');
   });
 
+  it('buildPublishedSeedPayload strips simulation-only forecast bulk from the canonical payload', () => {
+    const pred = makePrediction('conflict', 'Iran', 'Escalation risk: Iran', 0.72, 0.6, '7d', [
+      { type: 'cii', value: 'Iran CII 87 (critical)', weight: 0.4 },
+    ]);
+    buildForecastCase(pred);
+    pred.caseFile.situationContext = { id: 'sit-1', label: 'Iran conflict situation', forecastCount: 3 };
+    pred.caseFile.familyContext = { id: 'fam-1', label: 'War theater family', forecastCount: 6 };
+    pred.caseFile.worldState = {
+      ...pred.caseFile.worldState,
+      situationId: 'sit-1',
+      familyId: 'fam-1',
+      familyLabel: 'War theater family',
+      simulationSummary: 'Heavy simulation linkage that should stay out of the canonical Redis payload.',
+      simulationPosture: 'escalatory',
+      simulationPostureScore: 0.88,
+    };
+    pred.readiness = { overall: 0.82, explanation: 'heavy' };
+    pred.analysisPriority = 42;
+    pred.traceMeta = { narrativeSource: 'llm_combined', llmProvider: 'openrouter' };
+
+    const slimForecast = buildPublishedForecastPayload(pred);
+    assert.equal(slimForecast.caseFile.worldState.summary, pred.caseFile.worldState.summary);
+    assert.equal(slimForecast.caseFile.worldState.situationId, undefined);
+    assert.equal(slimForecast.caseFile.situationContext, undefined);
+    assert.equal(slimForecast.caseFile.familyContext, undefined);
+    assert.equal(slimForecast.readiness, undefined);
+    assert.equal(slimForecast.analysisPriority, undefined);
+    assert.equal(slimForecast.traceMeta, undefined);
+
+    const payload = buildPublishedSeedPayload({ generatedAt: 123, predictions: [pred] });
+    assert.equal(payload.generatedAt, 123);
+    assert.equal(payload.predictions.length, 1);
+    assert.equal(payload.predictions[0].caseFile.worldState.familyId, undefined);
+  });
+
   it('annotates what changed versus the prior run', () => {
     const pred = makePrediction('conflict', 'Iran', 'Escalation risk: Iran', 0.72, 0.6, '7d', [
       { type: 'cii', value: 'Iran CII 87 (critical)', weight: 0.4 },
@@ -1378,6 +1415,12 @@ describe('parseLLMScenarios', () => {
   it('extracts JSON from surrounding text', () => {
     const result = parseLLMScenarios('Here is my analysis:\n[{"index": 0, "scenario": "Test"}]\nDone.');
     assert.equal(result.length, 1);
+  });
+
+  it('extracts scenarios from fenced object wrappers', () => {
+    const result = parseLLMScenarios('```json\n{"scenarios":[{"index":0,"scenario":"Test scenario"}]}\n```');
+    assert.equal(result.length, 1);
+    assert.equal(result[0].index, 0);
   });
 });
 
@@ -2096,8 +2139,8 @@ describe('forecast quality gating', () => {
     assert.equal(pool.deferredCandidates.length, 0);
 
     const expandedPool = selectPublishedForecastPool([primary, duplicate, political, supply], { targetCount: 3 });
-    let candidatePool = [...expandedPool];
-    let deferred = [...expandedPool.deferredCandidates];
+    const candidatePool = [...expandedPool];
+    const deferred = [...expandedPool.deferredCandidates];
     let artifacts = buildPublishedForecastArtifacts(candidatePool, fullRunSituationClusters);
     while (artifacts.publishedPredictions.length < expandedPool.targetCount && deferred.length > 0) {
       candidatePool.push(deferred.shift());
@@ -2107,6 +2150,95 @@ describe('forecast quality gating', () => {
     assert.equal(artifacts.publishedPredictions.length, 3);
     assert.ok(artifacts.publishedPredictions.some((pred) => pred.id === supply.id));
     assert.ok(!artifacts.publishedPredictions.some((pred) => pred.id === duplicate.id));
+  });
+
+  it('boosts memory-backed situations during publish selection', () => {
+    const persistent = makePrediction('political', 'Iran', 'Political pressure: Iran', 0.53, 0.5, '14d', [{ type: 'news_corroboration', value: 'Iran unrest persists', weight: 0.34 }]);
+    const fresh = makePrediction('political', 'India', 'Political pressure: India', 0.54, 0.5, '14d', [{ type: 'news_corroboration', value: 'India coalition talks continue', weight: 0.34 }]);
+
+    buildForecastCases([persistent, fresh]);
+    for (const pred of [persistent, fresh]) {
+      pred.traceMeta = { narrativeSource: 'fallback' };
+      pred.readiness = { overall: 0.55 };
+      pred.analysisPriority = 0.12;
+    }
+
+    persistent.situationContext = { id: 'sit-iran-political', label: 'Iran political situation', forecastCount: 1, topSignals: [{ type: 'news_corroboration', count: 1 }] };
+    fresh.situationContext = { id: 'sit-india-political', label: 'India political situation', forecastCount: 1, topSignals: [{ type: 'news_corroboration', count: 1 }] };
+    persistent.caseFile.situationContext = persistent.situationContext;
+    fresh.caseFile.situationContext = fresh.situationContext;
+    persistent.familyContext = { id: 'fam-mena-political', label: 'MENA political family', forecastCount: 1, situationCount: 1, situationIds: ['sit-iran-political'] };
+    fresh.familyContext = { id: 'fam-asia-political', label: 'Asia political family', forecastCount: 1, situationCount: 1, situationIds: ['sit-india-political'] };
+    persistent.caseFile.familyContext = persistent.familyContext;
+    fresh.caseFile.familyContext = fresh.familyContext;
+
+    const pool = selectPublishedForecastPool([fresh, persistent], {
+      targetCount: 1,
+      memoryIndex: {
+        bySituationLabel: new Map([['iran political situation', {
+          situationId: 'sit-iran-political',
+          label: 'Iran political situation',
+          dominantRegion: 'Iran',
+          dominantDomain: 'political',
+          pressureMemory: 0.82,
+          memoryDelta: 0.14,
+        }]]),
+        byRegionDomain: new Map(),
+        edgeCounts: new Map([['sit-iran-political', 2]]),
+      },
+    });
+
+    assert.equal(pool.length, 1);
+    assert.equal(pool[0].id, persistent.id);
+    assert.equal(pool[0].publishSelectionMemory?.matchedBy, 'label');
+  });
+
+  it('boosts market-confirmed situations during publish selection', () => {
+    const confirmed = makePrediction('market', 'Middle East', 'Oil repricing: Strait of Hormuz', 0.51, 0.48, '30d', [
+      { type: 'prediction_market', value: 'Oil contracts reprice on Hormuz stress', weight: 0.3 },
+    ]);
+    const unconfirmed = makePrediction('political', 'India', 'Political pressure: India', 0.54, 0.49, '14d', [
+      { type: 'news_corroboration', value: 'Coalition bargaining remains active', weight: 0.32 },
+    ]);
+
+    buildForecastCases([confirmed, unconfirmed]);
+    for (const pred of [confirmed, unconfirmed]) {
+      pred.traceMeta = { narrativeSource: 'fallback' };
+      pred.readiness = { overall: 0.55 };
+      pred.analysisPriority = 0.12;
+      pred.situationContext = { id: `sit-${pred.region}`, label: `${pred.region} situation`, forecastCount: 1, topSignals: [{ type: 'news_corroboration', count: 1 }] };
+      pred.familyContext = { id: `fam-${pred.region}`, label: `${pred.region} family`, forecastCount: 1, situationCount: 1, situationIds: [pred.situationContext.id] };
+      pred.caseFile.situationContext = pred.situationContext;
+      pred.caseFile.familyContext = pred.familyContext;
+    }
+
+    confirmed.marketSelectionContext = {
+      confirmationScore: 0.74,
+      contradictionScore: 0.04,
+      topBucketId: 'energy',
+      topBucketLabel: 'Energy',
+      topBucketPressure: 0.66,
+      transmissionEdgeCount: 2,
+      topTransmissionStrength: 0.63,
+      topTransmissionConfidence: 0.68,
+      consequenceSummary: 'Hormuz risk is transmitting into Energy.',
+    };
+    unconfirmed.marketSelectionContext = {
+      confirmationScore: 0.08,
+      contradictionScore: 0.22,
+      topBucketId: '',
+      topBucketLabel: '',
+      topBucketPressure: 0,
+      transmissionEdgeCount: 0,
+      topTransmissionStrength: 0,
+      topTransmissionConfidence: 0,
+      consequenceSummary: '',
+    };
+
+    const pool = selectPublishedForecastPool([unconfirmed, confirmed], { targetCount: 1 });
+    assert.equal(pool.length, 1);
+    assert.equal(pool[0].id, confirmed.id);
+    assert.ok((pool[0].publishSelectionMarket?.confirmationScore || 0) > 0.7);
   });
 
   it('does not report capped situations when a situation only reaches the cap without dropping anything', () => {

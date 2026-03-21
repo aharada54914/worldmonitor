@@ -981,6 +981,13 @@ components:
                     type: string
                 upstreamUnavailable:
                     type: boolean
+                wowAvgPct:
+                    type: number
+                    format: double
+                wowAvailable:
+                    type: boolean
+                prevFetchedAt:
+                    type: string
         CountryBasket:
             type: object
             properties:
@@ -1002,6 +1009,9 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/GroceryItemPrice'
+                wowPct:
+                    type: number
+                    format: double
         GroceryItemPrice:
             type: object
             properties:
@@ -1038,6 +1048,13 @@ components:
                     type: string
                 mostExpensiveCountry:
                     type: string
+                wowAvgPct:
+                    type: number
+                    format: double
+                wowAvailable:
+                    type: boolean
+                prevFetchedAt:
+                    type: string
         BigMacCountryPrice:
             type: object
             properties:
@@ -1062,6 +1079,9 @@ components:
                     type: string
                 available:
                     type: boolean
+                wowPct:
+                    type: number
+                    format: double
         GetNationalDebtRequest:
             type: object
             description: GetNationalDebtRequest requests national debt data for all countries.

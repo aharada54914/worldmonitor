@@ -119,6 +119,10 @@ export function isProWidgetEnabled(): boolean {
   }
 }
 
+export function isProUser(): boolean {
+  return isWidgetFeatureEnabled() || isProWidgetEnabled();
+}
+
 export function getProWidgetKey(): string {
   try {
     return localStorage.getItem('wm-pro-key') ?? '';

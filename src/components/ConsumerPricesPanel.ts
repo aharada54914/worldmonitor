@@ -130,7 +130,7 @@ export class ConsumerPricesPanel extends Panel {
     if (rangeBtn?.dataset.range) {
       this.settings.range = rangeBtn.dataset.range as PanelSettings['range'];
       saveSettings(this.settings);
-      this.loadData();
+      void this.fetchData();
       return;
     }
 
@@ -142,7 +142,7 @@ export class ConsumerPricesPanel extends Panel {
     }
   }
 
-  public async loadData(): Promise<void> {
+  public async fetchData(): Promise<void> {
     if (this.loading) return;
     this.loading = true;
     this.showLoading();
@@ -156,6 +156,8 @@ export class ConsumerPricesPanel extends Panel {
       fetchRetailerPriceSpreads(market, basket),
       fetchConsumerPriceFreshness(market),
     ]);
+
+    if (!this.element?.isConnected) { this.loading = false; return; }
 
     this.overview = overview;
     this.categories = categories;
@@ -195,9 +197,25 @@ export class ConsumerPricesPanel extends Panel {
       </div>
     `;
 
-    let bodyHtml = '';
     const noData = this.overview?.upstreamUnavailable;
 
+    // When seed hasn't run yet, show a single full-panel placeholder instead
+    // of the ugly "No price data available yet" text inside each tab body
+    if (noData) {
+      this.setContent(`
+        <div class="consumer-prices-panel">
+          ${tabsHtml}
+          <div class="cp-body cp-seeding-state">
+            <div class="cp-seeding-icon">📊</div>
+            <div class="cp-seeding-title">Data collection in progress</div>
+            <div class="cp-seeding-sub">Retail prices are being aggregated — check back in a few hours.</div>
+          </div>
+        </div>
+      `);
+      return;
+    }
+
+    let bodyHtml = '';
     switch (tab) {
       case 'overview':
         bodyHtml = this.renderOverview();
@@ -221,7 +239,6 @@ export class ConsumerPricesPanel extends Panel {
     this.setContent(`
       <div class="consumer-prices-panel">
         ${tabsHtml}
-        ${noData && tab === 'overview' ? '<div class="cp-upstream-warn">Data collection starting — check back soon</div>' : ''}
         <div class="cp-body">${bodyHtml}</div>
       </div>
     `);

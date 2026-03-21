@@ -46,14 +46,22 @@ export class GroceryBasketPanel extends Panel {
 
     const rows = itemIds.map(itemId => {
       const firstItem = countries[0]?.items?.find(i => i.itemId === itemId);
+      // Per-item min/max USD: only countries with real data, type-safe filter
+      const prices = countries
+        .map(c => c.items?.find(i => i.itemId === itemId)?.usdPrice)
+        .filter((p): p is number => p != null && p > 0);
+      const rowMin = prices.length > 1 ? Math.min(...prices) : null;
+      const rowMax = prices.length > 1 ? Math.max(...prices) : null;
+      const eps = 0.001;
+
       const cells = countries.map(country => {
         const item = country.items?.find(i => i.itemId === itemId);
-        const isHigh = country.code === data.mostExpensiveCountry;
-        const isLow = country.code === data.cheapestCountry;
-        const cls = isLow ? 'gb-cheapest' : isHigh ? 'gb-priciest' : '';
         if (!item?.available || !item.usdPrice || !item.localPrice) {
           return `<td class="gb-cell gb-na">—</td>`;
         }
+        const isHigh = rowMax !== null && Math.abs(item.usdPrice - rowMax) < eps;
+        const isLow = rowMin !== null && Math.abs(item.usdPrice - rowMin) < eps;
+        const cls = isLow ? 'gb-cheapest' : isHigh ? 'gb-priciest' : '';
         return `<td class="gb-cell ${cls}">$${item.usdPrice.toFixed(2)}<span class="gb-local">${item.localPrice.toFixed(2)} ${escapeHtml(country.currency)}</span></td>`;
       }).join('');
       return `<tr><td class="gb-item-name">${escapeHtml(firstItem?.itemName ?? itemId)}<span class="gb-unit">${escapeHtml(firstItem?.unit ?? '')}</span></td>${cells}</tr>`;
@@ -63,13 +71,28 @@ export class GroceryBasketPanel extends Panel {
       const isLow = c.code === data.cheapestCountry;
       const isHigh = c.code === data.mostExpensiveCountry;
       const cls = isLow ? 'gb-cheapest' : isHigh ? 'gb-priciest' : '';
-      return `<td class="gb-cell gb-total ${cls}"><strong>$${c.totalUsd.toFixed(2)}</strong></td>`;
+      let wowBadge = '';
+      if (c.wowPct != null) {
+        const sign = c.wowPct >= 0 ? '▲' : '▼';
+        const wowCls = c.wowPct >= 0 ? 'bm-wow-up' : 'bm-wow-down';
+        wowBadge = `<span class="gb-wow ${wowCls}">${sign}${Math.abs(c.wowPct).toFixed(1)}%</span>`;
+      }
+      return `<td class="gb-cell gb-total ${cls}"><strong>$${c.totalUsd.toFixed(2)}</strong>${wowBadge}</td>`;
     }).join('')}</tr>`;
+
+    let wowSummary = '';
+    if (data.wowAvailable && data.wowAvgPct !== undefined) {
+      const avg = data.wowAvgPct;
+      const sign = avg >= 0 ? '▲' : '▼';
+      const cls = avg >= 0 ? 'bm-wow-up' : 'bm-wow-down';
+      wowSummary = `<div class="bm-wow-summary">Basket avg: <span class="${cls}">${sign}${Math.abs(avg).toFixed(1)}% WoW</span></div>`;
+    }
 
     const updatedAt = data.fetchedAt ? new Date(data.fetchedAt).toLocaleDateString() : '';
 
     const html = `
       <div class="gb-wrapper">
+        ${wowSummary}
         <div class="gb-scroll">
           <table class="gb-table">
             <thead><tr><th class="gb-item-col">${t('panels.groceryItem')}</th>${headerCells}</tr></thead>

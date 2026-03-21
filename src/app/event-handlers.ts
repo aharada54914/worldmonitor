@@ -2,7 +2,7 @@ import type { AppContext, AppModule } from '@/app/app-context';
 import type { AirlineIntelPanel } from '@/components/AirlineIntelPanel';
 import type { CustomWidgetPanel } from '@/components/CustomWidgetPanel';
 import { openWidgetChatModal } from '@/components/WidgetChatModal';
-import { deleteWidget, getWidget, saveWidget } from '@/services/widget-store';
+import { deleteWidget, getWidget, saveWidget, isProUser } from '@/services/widget-store';
 import type { McpDataPanel } from '@/components/McpDataPanel';
 import { openMcpConnectModal } from '@/components/McpConnectModal';
 import { deleteMcpPanel, getMcpPanel, saveMcpPanel } from '@/services/mcp-store';
@@ -914,6 +914,7 @@ export class EventHandlerManager implements AppModule {
   }
 
   setupExportPanel(): void {
+    if (!isProUser()) return;
     this.ctx.exportPanel = new ExportPanel(() => ({
       news: this.ctx.latestClusters.length > 0 ? this.ctx.latestClusters : this.ctx.allNews,
       markets: this.ctx.latestMarkets,
@@ -991,6 +992,7 @@ export class EventHandlerManager implements AppModule {
   }
 
   setupPlaybackControl(): void {
+    if (!isProUser()) return;
     this.ctx.playbackControl = new PlaybackControl();
     this.ctx.playbackControl.onSnapshot((snapshot) => {
       if (snapshot) {

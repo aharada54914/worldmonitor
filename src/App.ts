@@ -30,15 +30,17 @@ import type { StrategicRiskPanel } from '@/components/StrategicRiskPanel';
 import type { GulfEconomiesPanel } from '@/components/GulfEconomiesPanel';
 import type { GroceryBasketPanel } from '@/components/GroceryBasketPanel';
 import type { BigMacPanel } from '@/components/BigMacPanel';
+import type { ConsumerPricesPanel } from '@/components/ConsumerPricesPanel';
 import { isDesktopRuntime, waitForSidecarReady } from '@/services/runtime';
 import { getSecretState } from '@/services/runtime-config';
 import { BETA_MODE } from '@/config/beta';
 import { trackEvent, trackDeeplinkOpened } from '@/services/analytics';
 import { preloadCountryGeometry, getCountryNameByCode } from '@/services/country-geometry';
-import { initI18n } from '@/services/i18n';
+import { initI18n, t } from '@/services/i18n';
 
 import { computeDefaultDisabledSources, getLocaleBoostedSources, getTotalFeedCount } from '@/config/feeds';
-import { fetchBootstrapData } from '@/services/bootstrap';
+import { fetchBootstrapData, getBootstrapHydrationState, markBootstrapAsLive, type BootstrapHydrationState } from '@/services/bootstrap';
+import { describeFreshness } from '@/services/persistent-cache';
 import { DesktopUpdater } from '@/app/desktop-updater';
 import { CountryIntelManager } from '@/app/country-intel';
 import { SearchManager } from '@/app/search-manager';
@@ -79,12 +81,17 @@ export class App {
   private unsubAiFlow: (() => void) | null = null;
   private visiblePanelPrimed = new Set<string>();
   private visiblePanelPrimeRaf: number | null = null;
+  private bootstrapHydrationState: BootstrapHydrationState = getBootstrapHydrationState();
+  private cachedModeBannerEl: HTMLElement | null = null;
   private readonly handleViewportPrime = (): void => {
     if (this.visiblePanelPrimeRaf !== null) return;
     this.visiblePanelPrimeRaf = window.requestAnimationFrame(() => {
       this.visiblePanelPrimeRaf = null;
       void this.primeVisiblePanelData();
     });
+  };
+  private readonly handleConnectivityChange = (): void => {
+    this.updateConnectivityUi();
   };
 
   private isPanelNearViewport(panelId: string, marginPx = 400): boolean {
@@ -107,6 +114,84 @@ export class App {
 
   private shouldRefreshCorrelation(): boolean {
     return this.isAnyPanelNearViewport(['military-correlation', 'escalation-correlation', 'economic-correlation', 'disaster-correlation']);
+  }
+
+  private getCachedBootstrapUpdatedAt(): number | null {
+    const cachedTierTimestamps = Object.values(this.bootstrapHydrationState.tiers)
+      .filter((tier) => tier.source === 'cached' || tier.source === 'mixed')
+      .map((tier) => tier.updatedAt)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+
+    if (cachedTierTimestamps.length === 0) return null;
+    return Math.min(...cachedTierTimestamps);
+  }
+
+  private updateConnectivityUi(): void {
+    const statusIndicator = this.state.container.querySelector('.status-indicator');
+    const statusLabel = statusIndicator?.querySelector('span:last-child');
+    const online = typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+    const usingCachedBootstrap = this.bootstrapHydrationState.source === 'cached' || this.bootstrapHydrationState.source === 'mixed';
+    const cachedUpdatedAt = this.getCachedBootstrapUpdatedAt();
+
+    let statusMode: 'live' | 'cached' | 'unavailable' = 'live';
+    let bannerMessage: string | null = null;
+
+    if (!online) {
+      if (usingCachedBootstrap) {
+        statusMode = 'cached';
+        const freshness = cachedUpdatedAt ? describeFreshness(cachedUpdatedAt) : t('common.cached').toLowerCase();
+        bannerMessage = t('connectivity.offlineCached', { freshness });
+      } else {
+        statusMode = 'unavailable';
+        bannerMessage = t('connectivity.offlineUnavailable');
+      }
+    } else if (usingCachedBootstrap) {
+      statusMode = 'cached';
+      const freshness = cachedUpdatedAt ? describeFreshness(cachedUpdatedAt) : t('common.cached').toLowerCase();
+      bannerMessage = t('connectivity.cachedFallback', { freshness });
+    }
+
+    if (statusIndicator && statusLabel) {
+      statusIndicator.classList.toggle('status-indicator--cached', statusMode === 'cached');
+      statusIndicator.classList.toggle('status-indicator--unavailable', statusMode === 'unavailable');
+      statusLabel.textContent = statusMode === 'live'
+        ? t('header.live')
+        : statusMode === 'cached'
+          ? t('header.cached')
+          : t('header.unavailable');
+    }
+
+    if (bannerMessage) {
+      if (!this.cachedModeBannerEl) {
+        this.cachedModeBannerEl = document.createElement('div');
+        this.cachedModeBannerEl.className = 'cached-mode-banner';
+        this.cachedModeBannerEl.setAttribute('role', 'status');
+        this.cachedModeBannerEl.setAttribute('aria-live', 'polite');
+
+        const badge = document.createElement('span');
+        badge.className = 'cached-mode-banner__badge';
+        const text = document.createElement('span');
+        text.className = 'cached-mode-banner__text';
+        this.cachedModeBannerEl.append(badge, text);
+
+        const header = this.state.container.querySelector('.header');
+        if (header?.parentElement) {
+          header.insertAdjacentElement('afterend', this.cachedModeBannerEl);
+        } else {
+          this.state.container.prepend(this.cachedModeBannerEl);
+        }
+      }
+
+      this.cachedModeBannerEl.classList.toggle('cached-mode-banner--unavailable', statusMode === 'unavailable');
+      const badge = this.cachedModeBannerEl.querySelector('.cached-mode-banner__badge')!;
+      const text = this.cachedModeBannerEl.querySelector('.cached-mode-banner__text')!;
+      badge.textContent = statusMode === 'cached' ? t('header.cached') : t('header.unavailable');
+      text.textContent = bannerMessage;
+      return;
+    }
+
+    this.cachedModeBannerEl?.remove();
+    this.cachedModeBannerEl = null;
   }
 
   private async primeVisiblePanelData(forceAll = false): Promise<void> {
@@ -158,6 +243,10 @@ export class App {
     if (shouldPrime('bigmac')) {
       const panel = this.state.panels['bigmac'] as BigMacPanel | undefined;
       if (panel) primeTask('bigmac', () => panel.fetchData());
+    }
+    if (shouldPrime('consumer-prices')) {
+      const panel = this.state.panels['consumer-prices'] as ConsumerPricesPanel | undefined;
+      if (panel) primeTask('consumer-prices', () => panel.fetchData());
     }
     if (shouldPrimeAny(['markets', 'heatmap', 'commodities', 'crypto', 'energy-complex'])) {
       primeTask('markets', () => this.dataLoader.loadMarkets());
@@ -580,6 +669,7 @@ export class App {
 
     // Hydrate in-memory cache from bootstrap endpoint (before panels construct and fetch)
     await fetchBootstrapData();
+    this.bootstrapHydrationState = getBootstrapHydrationState();
 
     const geoCoordsPromise: Promise<PreciseCoordinates | null> =
       this.state.isMobile && this.state.initialUrlState?.lat === undefined && this.state.initialUrlState?.lon === undefined
@@ -592,6 +682,9 @@ export class App {
     // Phase 1: Layout (creates map + panels — they'll find hydrated data)
     this.panelLayout.init();
     showProBanner(this.state.container);
+    this.updateConnectivityUi();
+    window.addEventListener('online', this.handleConnectivityChange);
+    window.addEventListener('offline', this.handleConnectivityChange);
 
     const mobileGeoCoords = await geoCoordsPromise;
     if (mobileGeoCoords && this.state.map) {
@@ -681,6 +774,11 @@ export class App {
       this.primeVisiblePanelData(true),
     ]);
 
+    // If bootstrap was served from cache but live data just loaded, promote the status indicator
+    markBootstrapAsLive();
+    this.bootstrapHydrationState = getBootstrapHydrationState();
+    this.updateConnectivityUi();
+
     // Initial correlation engine run
     if (this.state.correlationEngine) {
       void this.state.correlationEngine.run(this.state).then(() => {
@@ -724,6 +822,8 @@ export class App {
     this.state.isDestroyed = true;
     window.removeEventListener('scroll', this.handleViewportPrime);
     window.removeEventListener('resize', this.handleViewportPrime);
+    window.removeEventListener('online', this.handleConnectivityChange);
+    window.removeEventListener('offline', this.handleConnectivityChange);
     if (this.visiblePanelPrimeRaf !== null) {
       window.cancelAnimationFrame(this.visiblePanelPrimeRaf);
       this.visiblePanelPrimeRaf = null;
@@ -738,6 +838,8 @@ export class App {
     this.unsubAiFlow?.();
     this.state.breakingBanner?.destroy();
     destroyBreakingNewsAlerts();
+    this.cachedModeBannerEl?.remove();
+    this.cachedModeBannerEl = null;
     this.state.map?.destroy();
     disconnectAisStream();
   }

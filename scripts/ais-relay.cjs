@@ -1711,6 +1711,7 @@ async function seedCryptoSectors() {
 const _defiCfg = requireShared('defi-tokens.json');
 const _aiCfg = requireShared('ai-tokens.json');
 const _otherCfg = requireShared('other-tokens.json');
+const TOKEN_PANELS_PAPRIKA_MAP = { ..._defiCfg.coinpaprika, ..._aiCfg.coinpaprika, ..._otherCfg.coinpaprika };
 const TOKEN_PANELS_SEED_TTL = 3600; // 1h
 
 function _mapTokens(ids, meta, byId) {
@@ -1730,6 +1731,21 @@ function _mapTokens(ids, meta, byId) {
   return tokens;
 }
 
+async function fetchTokenPanelsCoinPaprika(allIds) {
+  const data = await cyberHttpGetJson('https://api.coinpaprika.com/v1/tickers?quotes=USD', { Accept: 'application/json' }, 15000);
+  if (!Array.isArray(data)) throw new Error('CoinPaprika returned non-array');
+  const paprikaIds = new Set(allIds.map((id) => TOKEN_PANELS_PAPRIKA_MAP[id]).filter(Boolean));
+  const reverseMap = Object.fromEntries(Object.entries(TOKEN_PANELS_PAPRIKA_MAP).map(([g, p]) => [p, g]));
+  return data.filter((t) => paprikaIds.has(t.id)).map((t) => ({
+    id: reverseMap[t.id] || t.id,
+    current_price: t.quotes.USD.price,
+    price_change_percentage_24h: t.quotes.USD.percent_change_24h,
+    price_change_percentage_7d_in_currency: t.quotes.USD.percent_change_7d,
+    symbol: t.symbol.toLowerCase(),
+    name: t.name,
+  }));
+}
+
 async function seedTokenPanels() {
   const allIds = [...new Set([..._defiCfg.ids, ..._aiCfg.ids, ..._otherCfg.ids])];
   let data;
@@ -1742,8 +1758,8 @@ async function seedTokenPanels() {
     data = await cyberHttpGetJson(url, headers, 15000);
     if (!Array.isArray(data) || data.length === 0) throw new Error('CoinGecko returned no data');
   } catch (err) {
-    console.warn(`[TokenPanels] CoinGecko failed: ${err.message} — skipping`);
-    return 0;
+    console.warn(`[TokenPanels] CoinGecko failed: ${err.message} — trying CoinPaprika`);
+    try { data = await fetchTokenPanelsCoinPaprika(allIds); } catch (e2) { console.warn(`[TokenPanels] CoinPaprika also failed: ${e2.message} — skipping`); return 0; }
   }
   const byId = new Map(data.map((c) => [c.id, c]));
   const defi = { tokens: _mapTokens(_defiCfg.ids, _defiCfg.meta, byId) };
@@ -4355,6 +4371,7 @@ const USNI_REGION_COORDS = {
   'Diego Garcia': { lat: -7.32, lon: 72.42 }, Djibouti: { lat: 11.55, lon: 43.15 },
   Singapore: { lat: 1.35, lon: 103.82 }, 'Souda Bay': { lat: 35.49, lon: 24.08 },
   Naples: { lat: 40.84, lon: 14.25 },
+  'Tasman Sea': { lat: -40.0, lon: 160.0 }, 'Eastern Atlantic': { lat: 40.0, lon: -15.0 },
 };
 
 function usniStripHtml(html) {

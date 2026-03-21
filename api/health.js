@@ -45,6 +45,9 @@ const BOOTSTRAP_KEYS = {
   groceryBasket:     'economic:grocery-basket:v1',
   bigmac:            'economic:bigmac:v1',
   nationalDebt:      'economic:national-debt:v1',
+  defiTokens:        'market:defi-tokens:v1',
+  aiTokens:          'market:ai-tokens:v1',
+  otherTokens:       'market:other-tokens:v1',
 };
 
 const STANDALONE_KEYS = {
@@ -143,16 +146,17 @@ const SEED_META = {
   customsRevenue:      { key: 'seed-meta:trade:customs-revenue',              maxStaleMin: 1440 },
   sanctionsPressure:   { key: 'seed-meta:sanctions:pressure',                 maxStaleMin: 720 },
   radiationWatch:      { key: 'seed-meta:radiation:observations',             maxStaleMin: 30 },
-  groceryBasket:       { key: 'seed-meta:economic:grocery-basket',            maxStaleMin: 360 },
-  bigmac:              { key: 'seed-meta:economic:bigmac',                    maxStaleMin: 1440 },
+  groceryBasket:       { key: 'seed-meta:economic:grocery-basket',            maxStaleMin: 10080 }, // weekly seed; 10080 = 7 days
+  bigmac:              { key: 'seed-meta:economic:bigmac',                    maxStaleMin: 10080 }, // weekly seed; 10080 = 7 days
   thermalEscalation:   { key: 'seed-meta:thermal:escalation',                 maxStaleMin: 240 },
   nationalDebt:        { key: 'seed-meta:economic:national-debt',              maxStaleMin: 10080 }, // 7 days — monthly seed
   tariffTrendsUs:      { key: 'seed-meta:trade:tariffs:v1:840:all:10',        maxStaleMin: 900 },
-  consumerPricesOverview:   { key: 'seed-meta:consumer-prices:overview:ae',     maxStaleMin: 2880 }, // daily cron × 2
-  consumerPricesCategories: { key: 'seed-meta:consumer-prices:categories:ae',   maxStaleMin: 2880 },
-  consumerPricesMovers:     { key: 'seed-meta:consumer-prices:movers:ae:30d',   maxStaleMin: 2880 },
-  consumerPricesSpread:     { key: 'seed-meta:consumer-prices:spread:ae',       maxStaleMin: 2880 },
-  consumerPricesFreshness:  { key: 'seed-meta:consumer-prices:freshness:ae',    maxStaleMin: 2880 },
+  consumerPricesOverview:   { key: 'seed-meta:consumer-prices:overview:ae',     maxStaleMin: 90 }, // seed TTL=30min; 3× interval
+  consumerPricesCategories: { key: 'seed-meta:consumer-prices:categories:ae:30d',            maxStaleMin: 90 },
+  consumerPricesMovers:     { key: 'seed-meta:consumer-prices:movers:ae:30d',               maxStaleMin: 90 },
+  consumerPricesSpread:     { key: 'seed-meta:consumer-prices:retailer-spread:ae:essentials-ae', maxStaleMin: 120 }, // TTL=60min; 2× interval
+  consumerPricesFreshness:  { key: 'seed-meta:consumer-prices:freshness:ae',    maxStaleMin: 30  }, // TTL=10min; 3× interval
+  tokenPanels:       { key: 'seed-meta:market:token-panels',                   maxStaleMin: 90 }, // cron every 30min; 3× interval
 };
 
 // Standalone keys that are populated on-demand by RPC handlers (not seeds).

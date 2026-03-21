@@ -193,6 +193,17 @@ export async function aggregateBasket(basketSlug: string, marketCode: string) {
   await writeComputedIndex(basketId, null, null, 'value_index', valueIndex);
   await writeComputedIndex(basketId, null, null, 'coverage_pct', coveragePct);
 
+  // Retailer spread: (most expensive basket - cheapest basket) / cheapest × 100
+  const retailerTotals = new Map<string, number>();
+  for (const r of rows) {
+    retailerTotals.set(r.retailerSlug, (retailerTotals.get(r.retailerSlug) ?? 0) + r.price);
+  }
+  if (retailerTotals.size >= 2) {
+    const totals = [...retailerTotals.values()];
+    const spreadPct = ((Math.max(...totals) - Math.min(...totals)) / Math.min(...totals)) * 100;
+    await writeComputedIndex(basketId, null, null, 'retailer_spread_pct', Math.round(spreadPct * 10) / 10);
+  }
+
   // Per-category indices for buildTopCategories snapshot
   const byCategory = new Map<string, BasketRow[]>();
   for (const r of rows) {

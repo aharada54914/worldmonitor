@@ -284,6 +284,12 @@ export interface APTGroup {
   sponsor: string;
   lat: number;
   lon: number;
+  mitreId?: string;
+  mitreUrl?: string;
+  description?: string;
+  tactics?: string[];
+  targetSectors?: string[];
+  active?: boolean;
 }
 
 export type CyberThreatType = 'c2_server' | 'malware_host' | 'phishing' | 'malicious_url';
@@ -1469,4 +1475,5 @@ export interface CountryBriefSignals {
   travelAdvisoryMaxLevel: string | null;
   gpsJammingHexes: number;
   isTier1: boolean;
+  thermalEscalations: number;
 }

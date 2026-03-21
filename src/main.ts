@@ -244,6 +244,8 @@ Sentry.init({
     /args\.site\.enabledFeatures/,
     /can't access property "\w+", FONTS\[/,
     /^\w{1,2} is not a function\. \(In '\w{1,2}\(/,
+    /null is not an object \(evaluating '\w+\.magnitude\.toFixed'\)/,
+    /start offset of Int16Array should be a multiple of 2/,
   ],
   beforeSend(event) {
     const msg = event.exception?.values?.[0]?.value ?? '';
@@ -324,6 +326,7 @@ import { applyStoredTheme } from '@/utils/theme-manager';
 import { applyFont } from '@/services/font-settings';
 import { SITE_VARIANT } from '@/config/variant';
 import { clearChunkReloadGuard, installChunkReloadGuard } from '@/bootstrap/chunk-reload';
+import { installSwUpdateHandler } from '@/bootstrap/sw-update';
 
 // Auto-reload on stale chunk 404s after deployment (Vite fires this for modulepreload failures).
 const chunkReloadStorageKey = installChunkReloadGuard(__APP_VERSION__);
@@ -425,20 +428,7 @@ if ('__TAURI_INTERNALS__' in window || '__TAURI__' in window) {
 }
 
 if (!('__TAURI_INTERNALS__' in window) && !('__TAURI__' in window) && 'serviceWorker' in navigator) {
-  // Auto-reload when a NEW SW replaces an existing one (fixes stale HTML after deploys).
-  // Skip on first visit: skipWaiting+clientsClaim fires controllerchange when the SW
-  // claims the page for the first time, causing a useless full reload on every new session.
-  let hadController = !!navigator.serviceWorker.controller;
-  let refreshing = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController) {
-      hadController = true;
-      return;
-    }
-    if (refreshing) return;
-    refreshing = true;
-    window.location.reload();
-  });
+  installSwUpdateHandler();
 
   const SW_UPDATE_SUCCESS_INTERVAL_MS = 60 * 60 * 1000;
   const SW_UPDATE_FAILURE_INTERVAL_MS = 5 * 60 * 1000;

@@ -200,6 +200,8 @@
     "world": "WORLD",
     "tech": "TECH",
     "live": "LIVE",
+    "cached": "CACHED",
+    "unavailable": "UNAVAILABLE",
     "search": "Search",
     "settings": "SETTINGS",
     "sources": "SOURCES",
@@ -351,6 +353,8 @@
     "groceryItem": "Item",
     "bigmac": "Big Mac Index",
     "bigmacDesc": "Big Mac prices across Middle East countries (Big Mac Index)",
+    "bigmacWow": "WoW",
+    "bigmacCountry": "Country",
     "groceryBasketDesc": "Grocery basket price comparison across 24 countries worldwide",
     "gulfIndices": "Gulf Indices",
     "gulfCurrencies": "Gulf Currencies",
@@ -1984,6 +1988,8 @@
       "h3Hex": "H3 Hex"
     },
     "flight": {
+      "scheduled": "Sched",
+      "estimated": "Est",
       "groundStop": "GROUND STOP",
       "groundDelay": "GROUND DELAY PROGRAM",
       "departureDelay": "DEPARTURE DELAYS",
@@ -2600,6 +2606,11 @@
     "retry": "Retry",
     "refresh": "Refresh",
     "all": "All"
+  },
+  "connectivity": {
+    "offlineCached": "Offline — showing cached data from {{freshness}}.",
+    "offlineUnavailable": "Offline — live data is currently unavailable.",
+    "cachedFallback": "Live data unavailable — showing cached data from {{freshness}}."
   },
   "preferences": {
     "display": "Display",
