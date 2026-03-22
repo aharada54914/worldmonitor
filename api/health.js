@@ -192,6 +192,7 @@ const OPTIONAL_PROVIDER_ENV = {
   notamClosures: 'ICAO_API_KEY',
   gpsjam: 'WINGBITS_API_KEY',
   ucdpEvents: 'UCDP_ACCESS_TOKEN',
+  tariffTrendsUs: 'WTO_API_KEY',
 };
 
 async function redisPipeline(commands) {

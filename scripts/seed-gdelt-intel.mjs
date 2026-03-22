@@ -125,10 +125,16 @@ async function fetchAllTopics() {
     }
   }
 
-  return { topics, fetchedAt: new Date().toISOString() };
+  const populatedCount = topics.filter((topic) => Array.isArray(topic.articles) && topic.articles.length > 0).length;
+  return {
+    topics,
+    fetchedAt: new Date().toISOString(),
+    upstreamUnavailable: populatedCount < 3,
+  };
 }
 
 function validate(data) {
+  if (data?.upstreamUnavailable === true) return true;
   if (!Array.isArray(data?.topics) || data.topics.length === 0) return false;
   const populated = data.topics.filter((t) => Array.isArray(t.articles) && t.articles.length > 0);
   return populated.length >= 3; // at least 3 of 6 topics must have articles; partial 429s handled by per-topic merge above

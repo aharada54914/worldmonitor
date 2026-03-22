@@ -24,6 +24,15 @@ function isAggregate(code) {
   return AGGREGATE_CODES.has(code) || TERRITORY_CODES.has(code) || code.endsWith('Q');
 }
 
+function buildUnavailablePayload(reason = 'upstream_unavailable') {
+  return {
+    entries: [],
+    seededAt: new Date().toISOString(),
+    upstreamUnavailable: true,
+    reason,
+  };
+}
+
 async function fetchImfIndicator(indicator, periods, timeoutMs) {
   const url = `${IMF_BASE}/${indicator}?periods=${periods}`;
   const resp = await fetch(url, {
@@ -116,22 +125,29 @@ export function computeEntries(debtPctByCountry, gdpByCountry, deficitPctByCount
 }
 
 async function fetchNationalDebt() {
-  const [debtPctData, gdpData, deficitData, treasury] = await Promise.all([
-    fetchImfIndicator('GGXWDG_NGDP', '2023,2024', 30_000),
-    fetchImfIndicator('NGDPD', '2024', 30_000),
-    fetchImfIndicator('GGXCNL_NGDP', '2024', 30_000),
-    fetchTreasury().catch(() => null),
-  ]);
+  try {
+    const [debtPctData, gdpData, deficitData, treasury] = await Promise.all([
+      fetchImfIndicator('GGXWDG_NGDP', '2023,2024', 30_000),
+      fetchImfIndicator('NGDPD', '2024', 30_000),
+      fetchImfIndicator('GGXCNL_NGDP', '2024', 30_000),
+      fetchTreasury().catch(() => null),
+    ]);
 
-  const entries = computeEntries(debtPctData, gdpData, deficitData, treasury);
+    const entries = computeEntries(debtPctData, gdpData, deficitData, treasury);
 
-  return {
-    entries,
-    seededAt: new Date().toISOString(),
-  };
+    return {
+      entries,
+      seededAt: new Date().toISOString(),
+      upstreamUnavailable: false,
+    };
+  } catch (error) {
+    console.warn(`  National debt upstream unavailable: ${error.message || error}`);
+    return buildUnavailablePayload('imf_http_error');
+  }
 }
 
 function validate(data) {
+  if (data?.upstreamUnavailable === true) return true;
   return Array.isArray(data?.entries) && data.entries.length >= 100;
 }
 

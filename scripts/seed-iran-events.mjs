@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { loadEnvFile, CHROME_UA, getRedisCredentials, runSeed } from './_seed-utils.mjs';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -199,6 +199,16 @@ async function fetchIranEvents() {
   const dataPath = process.argv[2] || join(__dirname, 'data', 'iran-events-latest.json');
   console.log(`  Reading from: ${dataPath}`);
 
+  if (!existsSync(dataPath)) {
+    console.warn('  Iran events source file missing; publishing upstreamUnavailable placeholder');
+    return {
+      events: [],
+      scrapedAt: Date.now(),
+      upstreamUnavailable: true,
+      reason: 'manual_source_missing',
+    };
+  }
+
   const raw = JSON.parse(readFileSync(dataPath, 'utf8'));
   const events = raw.filter(e => e.id && e.title);
 
@@ -225,10 +235,12 @@ async function fetchIranEvents() {
   return {
     events: mapped,
     scrapedAt: Date.now(),
+    upstreamUnavailable: false,
   };
 }
 
 function validate(data) {
+  if (data?.upstreamUnavailable === true) return true;
   return Array.isArray(data?.events) && data.events.length >= 1;
 }
 
