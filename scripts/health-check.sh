@@ -70,6 +70,13 @@ extract_json_status() {
     | sed 's/.*:[[:space:]]*"\([^"]*\)"/\1/'
 }
 
+is_alert_status() {
+  case "$1" in
+    UNHEALTHY|UNREACHABLE) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # ヘルスエンドポイントを取得
 HTTP_RESPONSE=$(curl -sS --max-time 10 -w '\n__WM_HTTP_CODE__:%{http_code}' "${WM_URL}/api/health" 2>/dev/null)
 CURL_RC=$?
@@ -107,43 +114,52 @@ SHOULD_RESOLVE=0
 
 case "$STATUS" in
   DEGRADED|UNHEALTHY|UNREACHABLE)
-    if [ "$PREV_STATUS" != "$STATUS" ]; then
-      SHOULD_ALERT=1
-    elif [ "${NOW_EPOCH:-0}" -ge $(( ${LAST_ALERT_EPOCH:-0} + COOLDOWN_SECONDS )) ]; then
-      SHOULD_ALERT=1
+    if ! is_alert_status "$STATUS"; then
+      SHOULD_ALERT=0
+      if is_alert_status "$PREV_STATUS"; then
+        SHOULD_RESOLVE=1
+      fi
+    else
+      if [ "$PREV_STATUS" != "$STATUS" ]; then
+        SHOULD_ALERT=1
+      elif [ "${NOW_EPOCH:-0}" -ge $(( ${LAST_ALERT_EPOCH:-0} + COOLDOWN_SECONDS )) ]; then
+        SHOULD_ALERT=1
+      fi
     fi
     ;;
   *)
-    case "$PREV_STATUS" in
-      DEGRADED|UNHEALTHY|UNREACHABLE)
-        SHOULD_RESOLVE=1
-        ;;
-    esac
+    if is_alert_status "$PREV_STATUS"; then
+      SHOULD_RESOLVE=1
+    fi
     ;;
 esac
 
 # DEGRADED / UNHEALTHY / UNREACHABLE の場合にアラートを送信
 case "$STATUS" in
   DEGRADED|UNHEALTHY|UNREACHABLE)
-    ALERT_MSG="${TIMESTAMP} World Monitor ALERT: status=${STATUS} http=${HTTP_CODE:-000} url=${WM_URL}"
-    if [ "$SHOULD_ALERT" -eq 1 ]; then
-      echo "ALERT: $ALERT_MSG"
-
-      # メール通知 (mailutils/sendmail が使える場合)
-      if [ -n "$ALERT_EMAIL" ] && command -v mail >/dev/null 2>&1; then
-        echo "$ALERT_MSG" | mail -s "[WM] Health Alert: ${STATUS}" "$ALERT_EMAIL"
-      fi
-
-      # Discord 通知 (DISCORD_WEBHOOK_URL が設定されている場合)
-      if [ -n "$DISCORD_WEBHOOK_URL" ]; then
-        curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
-          -H 'Content-Type: application/json' \
-          -d "{\"content\":\"🚨 **World Monitor** ヘルスアラート\\nステータス: **${STATUS}**\\nHTTP: **${HTTP_CODE:-000}**\\n時刻: ${TIMESTAMP}\"}" \
-          --max-time 10 >/dev/null 2>&1
-      fi
-      LAST_ALERT_EPOCH="$NOW_EPOCH"
+    if ! is_alert_status "$STATUS"; then
+      echo "ALERT SKIPPED: status=${STATUS} notify-policy=severe-only"
     else
-      echo "ALERT SUPPRESSED: status=${STATUS} cooldown=${ALERT_COOLDOWN_MINUTES}m"
+      ALERT_MSG="${TIMESTAMP} World Monitor ALERT: status=${STATUS} http=${HTTP_CODE:-000} url=${WM_URL}"
+      if [ "$SHOULD_ALERT" -eq 1 ]; then
+        echo "ALERT: $ALERT_MSG"
+
+        # メール通知 (mailutils/sendmail が使える場合)
+        if [ -n "$ALERT_EMAIL" ] && command -v mail >/dev/null 2>&1; then
+          echo "$ALERT_MSG" | mail -s "[WM] Health Alert: ${STATUS}" "$ALERT_EMAIL"
+        fi
+
+        # Discord 通知 (DISCORD_WEBHOOK_URL が設定されている場合)
+        if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+          curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d "{\"content\":\"🚨 **World Monitor** ヘルスアラート\\nステータス: **${STATUS}**\\nHTTP: **${HTTP_CODE:-000}**\\n時刻: ${TIMESTAMP}\"}" \
+            --max-time 10 >/dev/null 2>&1
+        fi
+        LAST_ALERT_EPOCH="$NOW_EPOCH"
+      else
+        echo "ALERT SUPPRESSED: status=${STATUS} cooldown=${ALERT_COOLDOWN_MINUTES}m"
+      fi
     fi
     ;;
 esac
