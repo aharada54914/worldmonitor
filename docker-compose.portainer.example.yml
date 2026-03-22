@@ -1,0 +1,59 @@
+services:
+  worldmonitor:
+    environment:
+      # ---------- Core providers ----------
+      OPENROUTER_API_KEY: ""
+      GROQ_API_KEY: ""
+      AISSTREAM_API_KEY: ""
+      AVIATIONSTACK_API: ""
+      ICAO_API_KEY: ""
+      UCDP_ACCESS_TOKEN: ""
+      FINNHUB_API_KEY: ""
+      DISCORD_WEBHOOK_URL: ""
+
+      # ---------- Shared cache ----------
+      UPSTASH_REDIS_REST_URL: ""
+      UPSTASH_REDIS_REST_TOKEN: ""
+      REDIS_TOKEN: "wm-local-token"
+
+      # ---------- Optional data providers ----------
+      FRED_API_KEY: ""
+      EIA_API_KEY: ""
+      NASA_FIRMS_API_KEY: ""
+      ACLED_ACCESS_TOKEN: ""
+      CLOUDFLARE_API_TOKEN: ""
+      WINGBITS_API_KEY: ""
+
+      # ---------- Instance defaults ----------
+      WM_INSTANCE_THEME: "dark"
+      WM_INSTANCE_FONT_FAMILY: "system"
+      WM_INSTANCE_MAP_PROVIDER: "openfreemap"
+      WM_INSTANCE_MAP_THEME: "dark"
+      WM_INSTANCE_GLOBE_PRESET: "enhanced"
+      WM_INSTANCE_LANGUAGE: "ja"
+      WM_INSTANCE_STREAM_QUALITY: "auto"
+      WM_INSTANCE_LIVE_STREAMS_ALWAYS_ON: "true"
+      WM_INSTANCE_MAP_NEWS_FLASH: "true"
+      WM_INSTANCE_HEADLINE_MEMORY: "false"
+      WM_INSTANCE_BADGE_ANIMATION: "false"
+      WM_INSTANCE_CLOUD_LLM: "true"
+      WM_INSTANCE_BROWSER_MODEL: "false"
+      WM_INSTANCE_BREAKING_ALERTS_ENABLED: "true"
+      WM_INSTANCE_BREAKING_ALERTS_SOUND: "true"
+      WM_INSTANCE_BREAKING_ALERTS_DESKTOP_NOTIFICATIONS: "true"
+      WM_INSTANCE_BREAKING_ALERTS_SENSITIVITY: "critical-and-high"
+
+  ais-relay:
+    environment:
+      # ---------- Core relay providers ----------
+      AISSTREAM_API_KEY: ""
+      OPENROUTER_API_KEY: ""
+      AVIATIONSTACK_API: ""
+      ICAO_API_KEY: ""
+      UCDP_ACCESS_TOKEN: ""
+      FINNHUB_API_KEY: ""
+      WINGBITS_API_KEY: ""
+
+      # ---------- Shared cache ----------
+      UPSTASH_REDIS_REST_URL: ""
+      UPSTASH_REDIS_REST_TOKEN: ""

@@ -1,3 +1,5 @@
+import { getInstanceDefaults } from './instance-defaults';
+
 /**
  * Live stream playback preferences shared across Live News + Live Webcams.
  *
@@ -27,7 +29,7 @@ function writeBool(key: string, value: boolean): void {
 }
 
 export function getLiveStreamsAlwaysOn(): boolean {
-  return readBool(STORAGE_KEY_LIVE_STREAMS_ALWAYS_ON, true);
+  return readBool(STORAGE_KEY_LIVE_STREAMS_ALWAYS_ON, getInstanceDefaults().liveStreamsAlwaysOn ?? true);
 }
 
 export function setLiveStreamsAlwaysOn(alwaysOn: boolean): void {

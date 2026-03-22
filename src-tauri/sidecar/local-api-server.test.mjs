@@ -1037,6 +1037,67 @@ test('auth-required behavior unchanged — rejects unauthenticated requests when
   }
 });
 
+test('exposes runtime instance defaults via /api/local-instance-config', async () => {
+  const localApi = await setupApiDir({});
+  const originalTheme = process.env.WM_INSTANCE_THEME;
+  const originalFont = process.env.WM_INSTANCE_FONT_FAMILY;
+  const originalAlerts = process.env.WM_INSTANCE_BREAKING_ALERTS_ENABLED;
+  process.env.WM_INSTANCE_THEME = 'light';
+  process.env.WM_INSTANCE_FONT_FAMILY = 'system';
+  process.env.WM_INSTANCE_BREAKING_ALERTS_ENABLED = 'true';
+
+  const app = await createLocalApiServer({
+    port: 0,
+    apiDir: localApi.apiDir,
+    logger: { log() { }, warn() { }, error() { } },
+  });
+  const { port } = await app.start();
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/local-instance-config`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.success, true);
+    assert.equal(body.defaults.themePreference, 'light');
+    assert.equal(body.defaults.fontFamily, 'system');
+    assert.equal(body.defaults.breakingAlertsEnabled, true);
+  } finally {
+    if (originalTheme !== undefined) process.env.WM_INSTANCE_THEME = originalTheme;
+    else delete process.env.WM_INSTANCE_THEME;
+    if (originalFont !== undefined) process.env.WM_INSTANCE_FONT_FAMILY = originalFont;
+    else delete process.env.WM_INSTANCE_FONT_FAMILY;
+    if (originalAlerts !== undefined) process.env.WM_INSTANCE_BREAKING_ALERTS_ENABLED = originalAlerts;
+    else delete process.env.WM_INSTANCE_BREAKING_ALERTS_ENABLED;
+    await app.close();
+    await localApi.cleanup();
+  }
+});
+
+test('returns local instance defaults without auth token even when sidecar auth is enabled', async () => {
+  const localApi = await setupApiDir({});
+  const originalToken = process.env.LOCAL_API_TOKEN;
+  process.env.LOCAL_API_TOKEN = 'secret-token-123';
+
+  const app = await createLocalApiServer({
+    port: 0,
+    apiDir: localApi.apiDir,
+    logger: { log() { }, warn() { }, error() { } },
+  });
+  const { port } = await app.start();
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/local-instance-config`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.success, true);
+  } finally {
+    if (originalToken !== undefined) process.env.LOCAL_API_TOKEN = originalToken;
+    else delete process.env.LOCAL_API_TOKEN;
+    await app.close();
+    await localApi.cleanup();
+  }
+});
+
 
 test('prefers Brotli compression for payloads larger than 1KB when supported by the client', async () => {
   const remote = await setupRemoteServer();

@@ -1,3 +1,5 @@
+import { getInstanceDefaults } from './instance-defaults';
+
 export type GlobeRenderScale = 'auto' | '1' | '1.5' | '2' | '3';
 export type GlobeTexture = 'topographic' | 'blue-marble';
 
@@ -123,7 +125,7 @@ export function getGlobeVisualPreset(): GlobeVisualPreset {
     const raw = localStorage.getItem(PRESET_STORAGE_KEY);
     if (raw === 'classic' || raw === 'enhanced') return raw;
   } catch { /* ignore */ }
-  return 'classic';
+  return getInstanceDefaults().globeVisualPreset ?? 'classic';
 }
 
 export function setGlobeVisualPreset(preset: GlobeVisualPreset): void {

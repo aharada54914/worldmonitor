@@ -1,3 +1,5 @@
+import { getInstanceDefaults } from './instance-defaults';
+
 export type FontFamily = 'mono' | 'system';
 
 const STORAGE_KEY = 'wm-font-family';
@@ -15,7 +17,7 @@ export function getFontFamily(): FontFamily {
   } catch {
     // ignore
   }
-  return 'mono';
+  return getInstanceDefaults().fontFamily ?? 'mono';
 }
 
 export function setFontFamily(font: FontFamily): void {

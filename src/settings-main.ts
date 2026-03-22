@@ -30,6 +30,7 @@ import { getApiBaseUrl, isDesktopRuntime, resolveLocalApiPort, startSmartPollLoo
 import { tryInvokeTauri, invokeTauri } from '@/services/tauri-bridge';
 import { escapeHtml } from '@/utils/sanitize';
 import { initI18n, t } from '@/services/i18n';
+import { loadInstanceDefaults } from '@/services/instance-defaults';
 import { applyStoredTheme } from '@/utils/theme-manager';
 import { applyFont } from '@/services/font-settings';
 import { trackFeatureToggle } from '@/services/analytics';
@@ -849,6 +850,7 @@ function handleSearch(query: string): void {
 // ── Init ──
 
 async function initSettingsWindow(): Promise<void> {
+  await loadInstanceDefaults().catch(() => {});
   await initI18n();
   applyStoredTheme();
   applyFont();

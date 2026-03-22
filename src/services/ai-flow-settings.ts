@@ -1,3 +1,5 @@
+import { getInstanceDefaults } from './instance-defaults';
+
 /**
  * Quick Settings — Web-only user preferences for AI pipeline and map behavior.
  * Desktop (Tauri) manages AI config via its own settings window.
@@ -58,12 +60,13 @@ const DEFAULTS: AiFlowSettings = {
 };
 
 export function getAiFlowSettings(): AiFlowSettings {
+  const defaults = getInstanceDefaults();
   return {
-    browserModel: readBool(STORAGE_KEY_BROWSER_MODEL, DEFAULTS.browserModel),
-    cloudLlm: readBool(STORAGE_KEY_CLOUD_LLM, DEFAULTS.cloudLlm),
-    mapNewsFlash: readBool(STORAGE_KEY_MAP_NEWS_FLASH, DEFAULTS.mapNewsFlash),
-    headlineMemory: readBool(STORAGE_KEY_HEADLINE_MEMORY, DEFAULTS.headlineMemory),
-    badgeAnimation: readBool(STORAGE_KEY_BADGE_ANIMATION, DEFAULTS.badgeAnimation),
+    browserModel: readBool(STORAGE_KEY_BROWSER_MODEL, defaults.browserModel ?? DEFAULTS.browserModel),
+    cloudLlm: readBool(STORAGE_KEY_CLOUD_LLM, defaults.cloudLlm ?? DEFAULTS.cloudLlm),
+    mapNewsFlash: readBool(STORAGE_KEY_MAP_NEWS_FLASH, defaults.mapNewsFlash ?? DEFAULTS.mapNewsFlash),
+    headlineMemory: readBool(STORAGE_KEY_HEADLINE_MEMORY, defaults.headlineMemory ?? DEFAULTS.headlineMemory),
+    badgeAnimation: readBool(STORAGE_KEY_BADGE_ANIMATION, defaults.badgeAnimation ?? DEFAULTS.badgeAnimation),
   };
 }
 
@@ -107,7 +110,7 @@ export function getStreamQuality(): StreamQuality {
     const raw = localStorage.getItem(STORAGE_KEY_STREAM_QUALITY);
     if (raw && ['auto', 'small', 'medium', 'large', 'hd720'].includes(raw)) return raw as StreamQuality;
   } catch { /* ignore */ }
-  return 'auto';
+  return getInstanceDefaults().streamQuality ?? 'auto';
 }
 
 export function setStreamQuality(quality: StreamQuality): void {

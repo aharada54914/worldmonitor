@@ -145,6 +145,45 @@ const ALLOWED_ENV_KEYS = new Set([
   'AVIATIONSTACK_API', 'ICAO_API_KEY', 'UCDP_ACCESS_TOKEN',
 ]);
 
+const INSTANCE_DEFAULT_ENV_KEYS = Object.freeze({
+  themePreference: 'WM_INSTANCE_THEME',
+  fontFamily: 'WM_INSTANCE_FONT_FAMILY',
+  mapProvider: 'WM_INSTANCE_MAP_PROVIDER',
+  mapTheme: 'WM_INSTANCE_MAP_THEME',
+  globeVisualPreset: 'WM_INSTANCE_GLOBE_PRESET',
+  language: 'WM_INSTANCE_LANGUAGE',
+  streamQuality: 'WM_INSTANCE_STREAM_QUALITY',
+  liveStreamsAlwaysOn: 'WM_INSTANCE_LIVE_STREAMS_ALWAYS_ON',
+  mapNewsFlash: 'WM_INSTANCE_MAP_NEWS_FLASH',
+  headlineMemory: 'WM_INSTANCE_HEADLINE_MEMORY',
+  badgeAnimation: 'WM_INSTANCE_BADGE_ANIMATION',
+  cloudLlm: 'WM_INSTANCE_CLOUD_LLM',
+  browserModel: 'WM_INSTANCE_BROWSER_MODEL',
+  breakingAlertsEnabled: 'WM_INSTANCE_BREAKING_ALERTS_ENABLED',
+  breakingAlertsSound: 'WM_INSTANCE_BREAKING_ALERTS_SOUND',
+  breakingAlertsDesktopNotifications: 'WM_INSTANCE_BREAKING_ALERTS_DESKTOP_NOTIFICATIONS',
+  breakingAlertsSensitivity: 'WM_INSTANCE_BREAKING_ALERTS_SENSITIVITY',
+});
+
+function parseBooleanEnv(value) {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return undefined;
+}
+
+function getInstanceDefaultsFromEnv() {
+  const defaults = {};
+  for (const [key, envKey] of Object.entries(INSTANCE_DEFAULT_ENV_KEYS)) {
+    const raw = process.env[envKey];
+    if (raw == null || raw === '') continue;
+    const boolValue = parseBooleanEnv(raw);
+    defaults[key] = boolValue !== undefined ? boolValue : raw.trim();
+  }
+  return defaults;
+}
+
 const CHROME_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 // ── SSRF protection ──────────────────────────────────────────────────────
@@ -1130,6 +1169,13 @@ async function dispatch(requestUrl, req, routes, context) {
   // Every endpoint below requires a valid LOCAL_API_TOKEN.  This prevents
   // other local processes, malicious browser scripts, and rogue extensions
   // from accessing the sidecar API without the per-session token.
+  if (requestUrl.pathname === '/api/local-instance-config') {
+    return json({
+      success: true,
+      defaults: getInstanceDefaultsFromEnv(),
+    });
+  }
+
   const expectedToken = process.env.LOCAL_API_TOKEN;
   if (expectedToken) {
     const authHeader = req.headers.authorization || '';

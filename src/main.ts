@@ -322,6 +322,7 @@ import { debugGetCells, getCellCount } from '@/services/geo-convergence';
 import { initMetaTags } from '@/services/meta-tags';
 import { installRuntimeFetchPatch, installWebApiRedirect } from '@/services/runtime';
 import { loadDesktopSecrets } from '@/services/runtime-config';
+import { loadInstanceDefaults } from '@/services/instance-defaults';
 import { applyStoredTheme } from '@/utils/theme-manager';
 import { applyFont } from '@/services/font-settings';
 import { SITE_VARIANT } from '@/config/variant';
@@ -339,54 +340,61 @@ inject({
 // Initialize dynamic meta tags for sharing
 initMetaTags();
 
-// In desktop mode, route /api/* calls to the local Tauri sidecar backend.
-installRuntimeFetchPatch();
-// In web production, route RPC calls through api.worldmonitor.app (Cloudflare edge).
-installWebApiRedirect();
-loadDesktopSecrets().catch(() => {});
+async function bootstrapApp(): Promise<void> {
+  // In desktop mode, route /api/* calls to the local Tauri sidecar backend.
+  installRuntimeFetchPatch();
+  // In web production, route RPC calls through api.worldmonitor.app (Cloudflare edge).
+  installWebApiRedirect();
+  loadDesktopSecrets().catch(() => {});
+  await loadInstanceDefaults().catch(() => {});
 
-// Apply stored theme preference before app initialization (safety net for inline script)
-applyStoredTheme();
-applyFont();
+  // Apply stored theme preference before app initialization (safety net for inline script)
+  applyStoredTheme();
+  applyFont();
 
-// Set data-variant on <html> so CSS theme overrides activate
-if (SITE_VARIANT && SITE_VARIANT !== 'full') {
-  document.documentElement.dataset.variant = SITE_VARIANT;
+  // Set data-variant on <html> so CSS theme overrides activate
+  if (SITE_VARIANT && SITE_VARIANT !== 'full') {
+    document.documentElement.dataset.variant = SITE_VARIANT;
 
-  // Swap favicons to variant-specific versions before browser finishes fetching defaults
-  document.querySelectorAll<HTMLLinkElement>('link[rel="icon"], link[rel="apple-touch-icon"]').forEach(link => {
-    link.href = link.href
-      .replace(/\/favico\/favicon/g, `/favico/${SITE_VARIANT}/favicon`)
-      .replace(/\/favico\/apple-touch-icon/g, `/favico/${SITE_VARIANT}/apple-touch-icon`);
+    // Swap favicons to variant-specific versions before browser finishes fetching defaults
+    document.querySelectorAll<HTMLLinkElement>('link[rel="icon"], link[rel="apple-touch-icon"]').forEach(link => {
+      link.href = link.href
+        .replace(/\/favico\/favicon/g, `/favico/${SITE_VARIANT}/favicon`)
+        .replace(/\/favico\/apple-touch-icon/g, `/favico/${SITE_VARIANT}/apple-touch-icon`);
+    });
+  }
+
+  // Remove no-transition class after first paint to enable smooth theme transitions
+  requestAnimationFrame(() => {
+    document.documentElement.classList.remove('no-transition');
   });
-}
 
-// Remove no-transition class after first paint to enable smooth theme transitions
-requestAnimationFrame(() => {
-  document.documentElement.classList.remove('no-transition');
-});
+  // Clear stale settings-open flag (survives ungraceful shutdown)
+  localStorage.removeItem('wm-settings-open');
 
-// Clear stale settings-open flag (survives ungraceful shutdown)
-localStorage.removeItem('wm-settings-open');
+  // Standalone windows: ?settings=1 = panel display settings, ?live-channels=1 = channel management
+  // Both need i18n initialized so t() does not return undefined.
+  const urlParams = new URL(location.href).searchParams;
+  if (urlParams.get('settings') === '1') {
+    void Promise.all([import('./services/i18n'), import('./settings-window')]).then(
+      async ([i18n, m]) => {
+        await i18n.initI18n();
+        m.initSettingsWindow();
+      }
+    );
+    return;
+  }
 
-// Standalone windows: ?settings=1 = panel display settings, ?live-channels=1 = channel management
-// Both need i18n initialized so t() does not return undefined.
-const urlParams = new URL(location.href).searchParams;
-if (urlParams.get('settings') === '1') {
-  void Promise.all([import('./services/i18n'), import('./settings-window')]).then(
-    async ([i18n, m]) => {
-      await i18n.initI18n();
-      m.initSettingsWindow();
-    }
-  );
-} else if (urlParams.get('live-channels') === '1') {
-  void Promise.all([import('./services/i18n'), import('./live-channels-window')]).then(
-    async ([i18n, m]) => {
-      await i18n.initI18n();
-      m.initLiveChannelsWindow();
-    }
-  );
-} else {
+  if (urlParams.get('live-channels') === '1') {
+    void Promise.all([import('./services/i18n'), import('./live-channels-window')]).then(
+      async ([i18n, m]) => {
+        await i18n.initI18n();
+        m.initLiveChannelsWindow();
+      }
+    );
+    return;
+  }
+
   installUtmInterceptor();
   const app = new App('app');
   app
@@ -396,6 +404,8 @@ if (urlParams.get('settings') === '1') {
     })
     .catch(console.error);
 }
+
+void bootstrapApp();
 
 // Debug helpers for geo-convergence testing (remove in production)
 (window as unknown as Record<string, unknown>).geoDebug = {

@@ -1814,6 +1814,7 @@ async function startMarketDataSeedLoop() {
 // so Vercel handler serves from cache (avoids 114 API calls per miss)
 // ─────────────────────────────────────────────────────────────
 const AVIATIONSTACK_API_KEY = process.env.AVIATIONSTACK_API || '';
+const AVIATIONSTACK_BASE_URL = (process.env.AVIATIONSTACK_BASE_URL || 'https://api.aviationstack.com/v1').replace(/\/+$/, '');
 const AVIATION_SEED_INTERVAL_MS = 30 * 60 * 1000; // 30min
 const AVIATION_SEED_TTL = 10800; // 3h — 6x interval; survives ~5 consecutive missed pings
 const AVIATION_REDIS_KEY = 'aviation:delays:intl:v3';
@@ -1823,13 +1824,7 @@ const RESOLVED_STATUSES = new Set(['cancelled', 'landed', 'active', 'arrived', '
 
 // Must match src/config/airports.ts AVIATIONSTACK_AIRPORTS — update both when changing
 const AVIATIONSTACK_AIRPORTS = [
-  'YYZ', 'YVR', 'MEX', 'GRU', 'EZE', 'BOG', 'SCL',
-  'LHR', 'CDG', 'FRA', 'AMS', 'MAD', 'FCO', 'MUC', 'BCN', 'ZRH', 'IST', 'VIE', 'CPH',
-  'DUB', 'LIS', 'ATH', 'WAW',
-  'HND', 'NRT', 'PEK', 'PVG', 'HKG', 'SIN', 'ICN', 'BKK', 'SYD', 'DEL', 'BOM', 'KUL',
-  'CAN', 'TPE', 'MNL',
-  'DXB', 'DOH', 'AUH', 'RUH', 'CAI', 'TLV', 'AMM', 'KWI', 'CMN',
-  'JNB', 'NBO', 'LOS', 'ADD', 'CPT',
+  'HND', 'NRT', 'KIX', 'DXB',
 ];
 
 // Airport metadata needed for alert construction (inlined from airports.ts)
@@ -1853,6 +1848,7 @@ const AIRPORT_META = {
   CPH: { icao: 'EKCH', name: 'Copenhagen Airport', city: 'Copenhagen', country: 'Denmark', lat: 55.6180, lon: 12.6508, region: 'europe' },
   HND: { icao: 'RJTT', name: 'Tokyo Haneda', city: 'Tokyo', country: 'Japan', lat: 35.5494, lon: 139.7798, region: 'apac' },
   NRT: { icao: 'RJAA', name: 'Narita International', city: 'Tokyo', country: 'Japan', lat: 35.7720, lon: 140.3929, region: 'apac' },
+  KIX: { icao: 'RJBB', name: 'Kansai International', city: 'Osaka', country: 'Japan', lat: 34.4347, lon: 135.2440, region: 'apac' },
   PEK: { icao: 'ZBAA', name: 'Beijing Capital', city: 'Beijing', country: 'China', lat: 40.0799, lon: 116.6031, region: 'apac' },
   PVG: { icao: 'ZSPD', name: 'Shanghai Pudong', city: 'Shanghai', country: 'China', lat: 31.1443, lon: 121.8083, region: 'apac' },
   HKG: { icao: 'VHHH', name: 'Hong Kong International', city: 'Hong Kong', country: 'China', lat: 22.3080, lon: 113.9185, region: 'apac' },
@@ -1924,17 +1920,31 @@ function aviationDetermineSeverity(avgDelay, delayedPct) {
 
 function fetchAviationStackSingle(apiKey, iata) {
   return new Promise((resolve) => {
-    const today = new Date().toISOString().slice(0, 10);
-    const url = `https://api.aviationstack.com/v1/flights?access_key=${apiKey}&dep_iata=${iata}&flight_date=${today}&limit=100`;
-    const req = https.get(url, {
+    const url = new URL('flights', `${AVIATIONSTACK_BASE_URL}/`);
+    url.searchParams.set('access_key', apiKey);
+    url.searchParams.set('dep_iata', iata);
+    url.searchParams.set('limit', '100');
+    const client = url.protocol === 'http:' ? http : https;
+    const req = client.get(url, {
       headers: { 'User-Agent': CHROME_UA },
       timeout: 5000,
       family: 4,
     }, (resp) => {
       if (resp.statusCode !== 200) {
-        resp.resume();
-        logThrottled('warn', `aviation-http-${resp.statusCode}:${iata}`, `[Aviation] ${iata}: HTTP ${resp.statusCode}`);
-        return resolve({ ok: false, alert: null });
+        let body = '';
+        resp.on('data', (chunk) => { body += chunk; });
+        resp.on('end', () => {
+          let detail = '';
+          try {
+            const json = JSON.parse(body);
+            if (json?.error?.code || json?.error?.message) {
+              detail = ` ${json.error.code || 'upstream_error'}: ${json.error.message || ''}`.trimEnd();
+            }
+          } catch {}
+          logThrottled('warn', `aviation-http-${resp.statusCode}:${iata}`, `[Aviation] ${iata}: HTTP ${resp.statusCode}${detail}`);
+          resolve({ ok: false, alert: null });
+        });
+        return;
       }
       let body = '';
       resp.on('data', (chunk) => { body += chunk; });
@@ -6816,8 +6826,10 @@ function handleAviationStackRequest(req, res) {
     }, cached.json);
   }
 
-  const apiUrl = `https://api.aviationstack.com/v1/flights?${params}`;
-  const apiReq = https.get(apiUrl, {
+  const apiUrl = new URL('flights', `${AVIATIONSTACK_BASE_URL}/`);
+  apiUrl.search = params.toString();
+  const client = apiUrl.protocol === 'http:' ? http : https;
+  const apiReq = client.get(apiUrl, {
     headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
     timeout: 10000,
   }, (upstream) => {
@@ -6825,8 +6837,15 @@ function handleAviationStackRequest(req, res) {
     upstream.on('data', (chunk) => { body += chunk; });
     upstream.on('end', () => {
       if (upstream.statusCode !== 200) {
+        let detail = '';
+        try {
+          const json = JSON.parse(body);
+          if (json?.error?.code || json?.error?.message) {
+            detail = ` ${json.error.code || 'upstream_error'}: ${json.error.message || ''}`.trimEnd();
+          }
+        } catch {}
         logThrottled('warn', `aviationstack-upstream-${upstream.statusCode}`,
-          `[Relay] AviationStack upstream ${upstream.statusCode}`);
+          `[Relay] AviationStack upstream ${upstream.statusCode}${detail}`);
         return sendCompressed(req, res, upstream.statusCode || 502, {
           'Content-Type': 'application/json',
           'X-Aviation-Source': 'relay-upstream-error',

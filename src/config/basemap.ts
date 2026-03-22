@@ -2,6 +2,7 @@ import { Protocol } from 'pmtiles';
 import maplibregl from 'maplibre-gl';
 import { layers, namedFlavor } from '@protomaps/basemaps';
 import type { StyleSpecification } from 'maplibre-gl';
+import { getInstanceDefaults } from '@/services/instance-defaults';
 
 const R2_PROXY = import.meta.env.VITE_PMTILES_URL ?? '';
 const R2_PUBLIC = import.meta.env.VITE_PMTILES_URL_PUBLIC ?? '';
@@ -99,6 +100,13 @@ export function getMapProvider(): MapProvider {
     }
     return stored;
   }
+  const instanceDefault = getInstanceDefaults().mapProvider;
+  if (instanceDefault) {
+    if (instanceDefault === 'pmtiles' || instanceDefault === 'auto') {
+      return hasTilesUrl ? instanceDefault : 'openfreemap';
+    }
+    return instanceDefault;
+  }
   return hasTilesUrl ? 'auto' : 'openfreemap';
 }
 
@@ -110,6 +118,8 @@ export function getMapTheme(provider: MapProvider): string {
   const stored = localStorage.getItem(THEME_STORAGE_PREFIX + provider);
   const options = MAP_THEME_OPTIONS[provider];
   if (stored && options.some(o => o.value === stored)) return stored;
+  const instanceDefault = getInstanceDefaults().mapTheme;
+  if (instanceDefault && options.some(o => o.value === instanceDefault)) return instanceDefault;
   return DEFAULT_THEME[provider];
 }
 

@@ -6,6 +6,7 @@ public/blog/
 *.log
 .env
 .env.local
+docker-compose.override.yml
 .playwright-mcp/
 *-network.txt
 .vercel

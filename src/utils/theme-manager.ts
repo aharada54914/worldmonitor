@@ -1,4 +1,5 @@
 import { invalidateColorCache } from './theme-colors';
+import { getInstanceDefaults } from '@/services/instance-defaults';
 
 export type Theme = 'dark' | 'light';
 export type ThemePreference = 'auto' | 'dark' | 'light';
@@ -35,7 +36,7 @@ export function getThemePreference(): ThemePreference {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === 'auto' || stored === 'dark' || stored === 'light') return stored;
   } catch { /* noop */ }
-  return 'auto';
+  return getInstanceDefaults().themePreference ?? 'auto';
 }
 
 function resolveAutoTheme(): Theme {
@@ -116,7 +117,12 @@ export function applyStoredTheme(): void {
     effective = raw as Theme;
   } else {
     // No stored preference: happy defaults to light, others to dark
-    effective = variant === 'happy' ? 'light' : DEFAULT_THEME;
+    const instanceDefault = getInstanceDefaults().themePreference;
+    if (instanceDefault === 'dark' || instanceDefault === 'light') {
+      effective = instanceDefault;
+    } else {
+      effective = variant === 'happy' ? 'light' : DEFAULT_THEME;
+    }
   }
 
   document.documentElement.dataset.theme = effective;

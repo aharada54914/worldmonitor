@@ -1,6 +1,7 @@
 import type { NewsItem } from '@/types';
 import type { OrefAlert } from '@/services/oref-alerts';
 import { getSourceTier } from '@/config/feeds';
+import { getInstanceDefaults } from './instance-defaults';
 
 export interface BreakingAlert {
   id: string;
@@ -96,15 +97,23 @@ function saveDedupeMap(): void {
 
 export function getAlertSettings(): AlertSettings {
   if (cachedSettings) return cachedSettings;
+  const defaults = getInstanceDefaults();
+  const defaultSettings: AlertSettings = {
+    enabled: defaults.breakingAlertsEnabled ?? DEFAULT_SETTINGS.enabled,
+    soundEnabled: defaults.breakingAlertsSound ?? DEFAULT_SETTINGS.soundEnabled,
+    desktopNotificationsEnabled:
+      defaults.breakingAlertsDesktopNotifications ?? DEFAULT_SETTINGS.desktopNotificationsEnabled,
+    sensitivity: defaults.breakingAlertsSensitivity ?? DEFAULT_SETTINGS.sensitivity,
+  };
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      cachedSettings = { ...DEFAULT_SETTINGS, ...parsed };
+      cachedSettings = { ...defaultSettings, ...parsed };
       return cachedSettings!;
     }
   } catch {}
-  cachedSettings = { ...DEFAULT_SETTINGS };
+  cachedSettings = defaultSettings;
   return cachedSettings;
 }
 

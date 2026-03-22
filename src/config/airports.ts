@@ -52,6 +52,7 @@ export const MONITORED_AIRPORTS: MonitoredAirport[] = [
   // Asia-Pacific
   { iata: 'HND', icao: 'RJTT', name: 'Tokyo Haneda', city: 'Tokyo', country: 'Japan', lat: 35.5494, lon: 139.7798, region: 'apac' },
   { iata: 'NRT', icao: 'RJAA', name: 'Narita International', city: 'Tokyo', country: 'Japan', lat: 35.7720, lon: 140.3929, region: 'apac' },
+  { iata: 'KIX', icao: 'RJBB', name: 'Kansai International', city: 'Osaka', country: 'Japan', lat: 34.4347, lon: 135.2440, region: 'apac' },
   { iata: 'PEK', icao: 'ZBAA', name: 'Beijing Capital', city: 'Beijing', country: 'China', lat: 40.0799, lon: 116.6031, region: 'apac' },
   { iata: 'PVG', icao: 'ZSPD', name: 'Shanghai Pudong', city: 'Shanghai', country: 'China', lat: 31.1443, lon: 121.8083, region: 'apac' },
   { iata: 'CAN', icao: 'ZGGG', name: 'Guangzhou Baiyun International', city: 'Guangzhou', country: 'China', lat: 23.3924, lon: 113.2988, region: 'apac' },
@@ -139,18 +140,10 @@ export const FAA_AIRPORTS = MONITORED_AIRPORTS.filter(
 // Top international hubs queried via AviationStack (non-US; US uses FAA)
 // All airports remain in MONITORED_AIRPORTS for map display, NOTAMs, and gray dots
 export const AVIATIONSTACK_AIRPORTS: string[] = [
-  // Americas (7)
-  'YYZ', 'YVR', 'MEX', 'GRU', 'EZE', 'BOG', 'SCL',
-  // Europe (16)
-  'LHR', 'CDG', 'FRA', 'AMS', 'MAD', 'FCO', 'MUC', 'BCN', 'ZRH', 'IST', 'VIE', 'CPH',
-  'DUB', 'LIS', 'ATH', 'WAW',
-  // APAC (15)
-  'HND', 'NRT', 'PEK', 'PVG', 'HKG', 'SIN', 'ICN', 'BKK', 'SYD', 'DEL', 'BOM', 'KUL',
-  'CAN', 'TPE', 'MNL',
-  // MENA (9)
-  'DXB', 'DOH', 'AUH', 'RUH', 'CAI', 'TLV', 'AMM', 'KWI', 'CMN',
-  // Africa (5)
-  'JNB', 'NBO', 'LOS', 'ADD', 'CPT',
+  'HND',
+  'NRT',
+  'KIX',
+  'DXB',
 ];
 
 // Severity thresholds

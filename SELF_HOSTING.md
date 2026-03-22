@@ -6,7 +6,7 @@ Run the full World Monitor stack locally with Docker/Podman.
 
 - **Docker** or **Podman** (rootless works fine)
 - **Docker Compose** or **podman-compose** (`pip install podman-compose` or `uvx podman-compose`)
-- **Node.js 22+** (for running seed scripts on the host)
+- **Node.js 24 recommended** for host-side scripts (`22` remains supported)
 
 ## 🚀 Quick Start
 
@@ -28,9 +28,11 @@ open http://localhost:3000
 
 The dashboard works out of the box with public data sources (earthquakes, weather, conflicts, etc.). API keys unlock additional data feeds.
 
+For a full inventory of `user_local`, `instance_default`, and `instance_secret` settings, see [docs/SETTINGS_MANAGEMENT.md](/Users/jrmag/worldmonitor/docs/SETTINGS_MANAGEMENT.md).
+
 ## 🔑 API Keys
 
-Create a `docker-compose.override.yml` to inject your keys. This file is **gitignored** — your secrets stay local.
+Create a `docker-compose.override.yml` to inject your keys. This file is **gitignored** — your secrets stay local. If you manage the stack in Portainer, start from [docker-compose.portainer.example.yml](/Users/jrmag/worldmonitor/docker-compose.portainer.example.yml) and paste the relevant environment section into the stack editor.
 
 ```yaml
 services:
@@ -69,6 +71,8 @@ services:
     environment:
       AISSTREAM_API_KEY: ""       # same key as above — relay needs it too
 ```
+
+If you run on a VPS, prefer editing stack environment variables in Portainer instead of hand-editing Compose on disk. Runtime UX defaults such as theme, map provider, stream quality, and breaking-alert defaults can now be managed with the `WM_INSTANCE_*` variables documented in [.env.example](/Users/jrmag/worldmonitor/.env.example) and [docs/SETTINGS_MANAGEMENT.md](/Users/jrmag/worldmonitor/docs/SETTINGS_MANAGEMENT.md).
 
 ### 💰 Free vs Paid
 
@@ -153,12 +157,13 @@ docker compose down && docker compose up -d
 
 ### ⚠️ Build Notes
 
-- The Docker image uses **Node.js 22 Alpine** for both builder and runtime stages
+- The Docker image uses **Node.js 24 Alpine** for both builder and runtime stages
+- CI validates the core Node workflows on both **Node.js 22** and **Node.js 24**
 - Blog site build is skipped in Docker (separate dependencies)
 - The runtime stage needs `gettext` (Alpine package) for `envsubst` in the nginx config
 - If you hit `npm ci` sync errors in Docker, regenerate the lockfile with the container's npm version:
   ```bash
-  docker run --rm -v "$(pwd)":/app -w /app node:22-alpine npm install --package-lock-only
+  docker run --rm -v "$(pwd)":/app -w /app node:24-alpine npm install --package-lock-only
   ```
 
 ## 🌐 Connecting to External Infrastructure
@@ -202,7 +207,7 @@ services:
 | 📡 `0/55 OK` on health check | Seeders haven't run — `./scripts/run-seeders.sh` |
 | 🔴 nginx won't start | Check `podman logs worldmonitor` — likely missing `gettext` package |
 | 🔑 Seeders say "Missing UPSTASH_REDIS_REST_URL" | Stack isn't running, or run via `./scripts/run-seeders.sh` (auto-sets env vars) |
-| 📦 `npm ci` fails in Docker build | Lockfile mismatch — regenerate with `docker run --rm -v $(pwd):/app -w /app node:22-alpine npm install --package-lock-only` |
+| 📦 `npm ci` fails in Docker build | Lockfile mismatch — regenerate with `docker run --rm -v $(pwd):/app -w /app node:24-alpine npm install --package-lock-only` |
 | 🚢 No vessel data | Set `AISSTREAM_API_KEY` in both `worldmonitor` and `ais-relay` services |
 | 🔥 No wildfire data | Set `NASA_FIRMS_API_KEY` |
 | 🌐 No outage data | Requires `CLOUDFLARE_API_TOKEN` (paid Radar access) |
