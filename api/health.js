@@ -109,9 +109,9 @@ const SEED_META = {
   // serviceStatuses: moved to ON_DEMAND — RPC-populated, no dedicated seed, goes stale when no users visit
   cableHealth:      { key: 'seed-meta:cable-health',              maxStaleMin: 90 }, // ais-relay warm-ping runs every 30min; 90min = 3× interval catches missed pings without false positives
   macroSignals:     { key: 'seed-meta:economic:macro-signals',    maxStaleMin: 20 },
-  bisPolicy:        { key: 'seed-meta:economic:bis:policy',       maxStaleMin: 10080 },
-  bisExchange:      { key: 'seed-meta:economic:bis:eer',          maxStaleMin: 10080 },
-  bisCredit:        { key: 'seed-meta:economic:bis:credit',       maxStaleMin: 10080 },
+  bisPolicy:        { key: 'seed-meta:economic:bis',              maxStaleMin: 10080 },
+  bisExchange:      { key: 'seed-meta:economic:bis',              maxStaleMin: 10080 },
+  bisCredit:        { key: 'seed-meta:economic:bis',              maxStaleMin: 10080 },
   shippingRates:    { key: 'seed-meta:supply_chain:shipping',     maxStaleMin: 420 },
   chokepoints:      { key: 'seed-meta:supply_chain:chokepoints',  maxStaleMin: 60 },
   minerals:         { key: 'seed-meta:supply_chain:minerals',     maxStaleMin: 10080 },
@@ -154,7 +154,7 @@ const SEED_META = {
   consumerPricesOverview:   { key: 'seed-meta:consumer-prices:overview:ae',     maxStaleMin: 90 }, // seed TTL=30min; 3× interval
   consumerPricesCategories: { key: 'seed-meta:consumer-prices:categories:ae:30d',            maxStaleMin: 90 },
   consumerPricesMovers:     { key: 'seed-meta:consumer-prices:movers:ae:30d',               maxStaleMin: 90 },
-  consumerPricesSpread:     { key: 'seed-meta:consumer-prices:retailer-spread:ae:essentials-ae', maxStaleMin: 120 }, // TTL=60min; 2× interval
+  consumerPricesSpread:     { key: 'seed-meta:consumer-prices:spread:ae',    maxStaleMin: 120 }, // TTL=60min; 2× interval
   consumerPricesFreshness:  { key: 'seed-meta:consumer-prices:freshness:ae',    maxStaleMin: 30  }, // TTL=10min; 3× interval
   tokenPanels:       { key: 'seed-meta:market:token-panels',                   maxStaleMin: 90 }, // cron every 30min; 3× interval
 };
@@ -173,7 +173,7 @@ const ON_DEMAND_KEYS = new Set([
 
 // Keys where 0 records is a valid healthy state (e.g. no airports closed).
 // The key must still exist in Redis; only the record count can be 0.
-const EMPTY_DATA_OK_KEYS = new Set(['notamClosures', 'faaDelays', 'gpsjam']);
+const EMPTY_DATA_OK_KEYS = new Set(['flightDelays', 'intlDelays', 'notamClosures', 'faaDelays', 'gpsjam']);
 
 // Cascade groups: if any key in the group has data, all empty siblings are OK.
 // Theater posture uses live → stale → backup fallback chain.
@@ -186,6 +186,13 @@ const CASCADE_GROUPS = {
 };
 
 const NEG_SENTINEL = '__WM_NEG__';
+const OPTIONAL_PROVIDER_ENV = {
+  outages: 'CLOUDFLARE_API_TOKEN',
+  wildfires: 'NASA_FIRMS_API_KEY',
+  notamClosures: 'ICAO_API_KEY',
+  gpsjam: 'WINGBITS_API_KEY',
+  ucdpEvents: 'UCDP_ACCESS_TOKEN',
+};
 
 async function redisPipeline(commands) {
   const url = process.env.UPSTASH_REDIS_REST_URL;
@@ -211,18 +218,26 @@ function dataSize(parsed) {
   if (!parsed) return 0;
   if (Array.isArray(parsed)) return parsed.length;
   if (typeof parsed === 'object') {
-    for (const k of ['quotes', 'hexes', 'events', 'stablecoins', 'fires', 'threats',
-                      'earthquakes', 'outages', 'delays', 'items', 'predictions', 'alerts', 'awards',
-                      'papers', 'repos', 'articles', 'signals', 'rates', 'countries',
-                      'chokepoints', 'minerals', 'anomalies', 'flows', 'bases', 'flights',
-                      'theaters', 'fleets', 'warnings', 'closures', 'cables',
-                      'airports', 'closedIcaos', 'categories', 'regions', 'entries', 'satellites',
-                      'sectors', 'statuses', 'scores', 'topics', 'advisories', 'months']) {
-      if (Array.isArray(parsed[k])) return parsed[k].length;
+    const candidates = [parsed, ...Object.values(parsed).filter((value) => value && typeof value === 'object' && !Array.isArray(value))];
+    for (const candidate of candidates) {
+      for (const k of ['quotes', 'hexes', 'events', 'stablecoins', 'fires', 'threats',
+                        'earthquakes', 'outages', 'delays', 'items', 'predictions', 'alerts', 'awards',
+                        'papers', 'repos', 'articles', 'signals', 'rates', 'countries',
+                        'chokepoints', 'minerals', 'anomalies', 'flows', 'bases', 'flights',
+                        'theaters', 'fleets', 'warnings', 'closures', 'cables',
+                        'airports', 'closedIcaos', 'categories', 'regions', 'entries', 'satellites',
+                        'sectors', 'statuses', 'scores', 'topics', 'advisories', 'months',
+                        'retailers', 'datapoints', 'indices']) {
+        if (Array.isArray(candidate[k])) return candidate[k].length;
+      }
     }
     return Object.keys(parsed).length;
   }
   return typeof parsed === 'string' ? parsed.length : 1;
+}
+
+function isUpstreamUnavailable(parsed) {
+  return !!(parsed && typeof parsed === 'object' && parsed.upstreamUnavailable === true);
 }
 
 export default async function handler(req) {
@@ -275,6 +290,8 @@ export default async function handler(req) {
     const parsed = parseRedisValue(raw);
     const size = dataSize(parsed);
     const seedCfg = SEED_META[name];
+    const providerMissing = OPTIONAL_PROVIDER_ENV[name] ? !process.env[OPTIONAL_PROVIDER_ENV[name]] : false;
+    const upstreamUnavailable = isUpstreamUnavailable(parsed);
 
     let seedAge = null;
     let seedStale = null;
@@ -290,12 +307,28 @@ export default async function handler(req) {
     }
 
     let status;
-    if (!parsed || raw === NEG_SENTINEL) {
+    if (providerMissing) {
+      status = 'UPSTREAM_DISABLED';
+      warnCount++;
+    } else if (!parsed || raw === NEG_SENTINEL) {
       status = 'EMPTY';
       critCount++;
+    } else if (upstreamUnavailable) {
+      status = 'UPSTREAM_UNAVAILABLE';
+      warnCount++;
     } else if (size === 0) {
-      status = 'EMPTY_DATA';
-      critCount++;
+      if (EMPTY_DATA_OK_KEYS.has(name)) {
+        if (seedStale === true) {
+          status = 'STALE_SEED';
+          warnCount++;
+        } else {
+          status = 'OK';
+          okCount++;
+        }
+      } else {
+        status = 'EMPTY_DATA';
+        critCount++;
+      }
     } else if (seedStale === true) {
       status = 'STALE_SEED';
       warnCount++;
@@ -317,6 +350,8 @@ export default async function handler(req) {
     const size = dataSize(parsed);
     const isOnDemand = ON_DEMAND_KEYS.has(name);
     const seedCfg = SEED_META[name];
+    const providerMissing = OPTIONAL_PROVIDER_ENV[name] ? !process.env[OPTIONAL_PROVIDER_ENV[name]] : false;
+    const upstreamUnavailable = isUpstreamUnavailable(parsed);
 
     // Freshness tracking for standalone keys (same logic as bootstrap keys)
     let seedAge = null;
@@ -351,7 +386,10 @@ export default async function handler(req) {
     }
 
     let status;
-    if (!parsed || raw === NEG_SENTINEL) {
+    if (providerMissing) {
+      status = 'UPSTREAM_DISABLED';
+      warnCount++;
+    } else if (!parsed || raw === NEG_SENTINEL) {
       if (cascadeCovered) {
         status = 'OK_CASCADE';
         okCount++;
@@ -370,6 +408,9 @@ export default async function handler(req) {
         status = 'EMPTY';
         critCount++;
       }
+    } else if (upstreamUnavailable) {
+      status = 'UPSTREAM_UNAVAILABLE';
+      warnCount++;
     } else if (size === 0) {
       if (cascadeCovered) {
         status = 'OK_CASCADE';

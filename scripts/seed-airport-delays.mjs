@@ -5,6 +5,7 @@ import { loadEnvFile, CHROME_UA, getRedisCredentials, acquireLockSafely, release
 loadEnvFile(import.meta.url);
 
 const FAA_CACHE_KEY = 'aviation:delays:faa:v1';
+const BOOTSTRAP_CACHE_KEY = 'aviation:delays-bootstrap:v1';
 const NOTAM_CACHE_KEY = 'aviation:notam:closures:v2';
 const CACHE_TTL = 7200;
 
@@ -282,6 +283,8 @@ async function main() {
   try {
     await redisSet(url, token, FAA_CACHE_KEY, faaData, CACHE_TTL);
     console.log(`  ${FAA_CACHE_KEY}: written`);
+    await redisSet(url, token, BOOTSTRAP_CACHE_KEY, faaData, CACHE_TTL);
+    console.log(`  ${BOOTSTRAP_CACHE_KEY}: written`);
     await writeFreshnessMetadata('aviation', 'faa', faaData.alerts.length, 'faa-asws');
 
     const verified1 = await verifySeedKey(FAA_CACHE_KEY);
