@@ -17,11 +17,11 @@
  * - get-webcam-image: per-webcamId Windy API lookup
  */
 
-import { loadEnvFile, CHROME_UA } from './_seed-utils.mjs';
+import { loadEnvFile, CHROME_UA, getWorldMonitorApiBaseUrl } from './_seed-utils.mjs';
 
 loadEnvFile(import.meta.url);
 
-const API_BASE = 'https://api.worldmonitor.app';
+const API_BASE = getWorldMonitorApiBaseUrl();
 const TIMEOUT = 30_000;
 
 async function warmPing(name, path) {

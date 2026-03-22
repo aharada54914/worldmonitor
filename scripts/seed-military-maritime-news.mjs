@@ -24,7 +24,7 @@ import { loadEnvFile, CHROME_UA } from './_seed-utils.mjs';
 
 loadEnvFile(import.meta.url);
 
-const API_BASE = 'https://api.worldmonitor.app';
+const API_BASE = (process.env.WM_API_BASE_URL || process.env.API_BASE_URL || 'https://api.worldmonitor.app').replace(/\/+$/, '');
 const TIMEOUT = 30_000;
 
 async function warmPing(name, path, body = {}) {

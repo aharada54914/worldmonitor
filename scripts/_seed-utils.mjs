@@ -11,6 +11,11 @@ const __seed_dirname = dirname(fileURLToPath(import.meta.url));
 
 export { CHROME_UA };
 
+export function getWorldMonitorApiBaseUrl(fallback = 'https://api.worldmonitor.app') {
+  const raw = process.env.WM_API_BASE_URL || process.env.API_BASE_URL || fallback;
+  return String(raw || fallback).replace(/\/+$/, '');
+}
+
 export function loadSharedConfig(filename) {
   for (const base of [join(__seed_dirname, '..', 'shared'), join(__seed_dirname, 'shared')]) {
     const p = join(base, filename);

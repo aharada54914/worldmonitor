@@ -8,11 +8,11 @@
  * Standalone fallback — primary seeder is the AIS relay loop.
  */
 
-import { loadEnvFile, CHROME_UA, getRedisCredentials, logSeedResult, extendExistingTtl } from './_seed-utils.mjs';
+import { loadEnvFile, CHROME_UA, getRedisCredentials, logSeedResult, extendExistingTtl, getWorldMonitorApiBaseUrl } from './_seed-utils.mjs';
 
 loadEnvFile(import.meta.url);
 
-const RPC_URL = 'https://api.worldmonitor.app/api/infrastructure/v1/list-service-statuses';
+const RPC_URL = `${getWorldMonitorApiBaseUrl()}/api/infrastructure/v1/list-service-statuses`;
 const CANONICAL_KEY = 'infra:service-statuses:v1';
 
 async function warmPing() {

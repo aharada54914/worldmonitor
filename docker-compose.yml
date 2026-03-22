@@ -85,6 +85,7 @@ services:
     container_name: worldmonitor-ais-relay
     environment:
       AISSTREAM_API_KEY: "${AISSTREAM_API_KEY:-}"
+      WM_API_BASE_URL: "http://worldmonitor:8080"
       PORT: "3004"
     restart: unless-stopped
 
