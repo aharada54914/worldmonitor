@@ -7,8 +7,9 @@ loadEnvFile(import.meta.url);
 const CANONICAL_KEY = 'intelligence:gdelt-intel:v1';
 const CACHE_TTL = 86400; // 24h — intentionally much longer than the 2h cron so verifySeedKey always has a prior snapshot to merge from when GDELT 429s all topics
 const GDELT_DOC_API = 'https://api.gdeltproject.org/api/v2/doc/doc';
-const INTER_TOPIC_DELAY_MS = 20_000; // 20s between topics on success
-const POST_EXHAUST_DELAY_MS = 120_000; // 2min extra cooldown after a topic exhausts all retries
+const INTER_TOPIC_DELAY_MS = 2_000; // keep topic spacing, but don't stall the whole seed batch
+const RETRY_BACKOFF_BASE_MS = 10_000; // fail fast enough for batch runners while still giving GDELT a brief cooldown
+const POST_EXHAUST_DELAY_MS = 5_000; // short cooldown after an exhausted topic before trying the next one
 
 const INTEL_TOPICS = [
   { id: 'military',     query: '(military exercise OR troop deployment OR airstrike OR "naval exercise") sourcelang:eng' },
@@ -68,7 +69,7 @@ async function fetchTopicArticles(topic) {
   };
 }
 
-async function fetchWithRetry(topic, maxRetries = 3) {
+async function fetchWithRetry(topic, maxRetries = 1) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await fetchTopicArticles(topic);
@@ -79,8 +80,9 @@ async function fetchWithRetry(topic, maxRetries = 3) {
         // exhausted:true only when 429 was the reason — post-exhaust cooldown is only relevant for rate-limit windows
         return { id: topic.id, articles: [], fetchedAt: new Date().toISOString(), exhausted: is429 };
       }
-      // Exponential backoff: 60s, 120s, 240s — GDELT rate limit windows exceed 50s
-      const backoff = 60_000 * Math.pow(2, attempt);
+      // Keep retries short so one rate-limited provider does not block the whole
+      // host seeder batch for tens of minutes. Cached snapshots are merged later.
+      const backoff = RETRY_BACKOFF_BASE_MS * 2 ** attempt;
       console.log(`    429 rate-limited, waiting ${backoff / 1000}s... (attempt ${attempt + 1}/${maxRetries + 1})`);
       await sleep(backoff);
     }
@@ -135,6 +137,7 @@ function validate(data) {
 runSeed('intelligence', 'gdelt-intel', CANONICAL_KEY, fetchAllTopics, {
   validateFn: validate,
   ttlSeconds: CACHE_TTL,
+  lockTtlMs: 300_000,
   sourceVersion: 'gdelt-doc-v2',
 }).catch((err) => {
   const _cause = err.cause ? ` (cause: ${err.cause.message || err.cause.code || err.cause})` : ''; console.error('FATAL:', (err.message || err) + _cause);
