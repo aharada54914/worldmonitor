@@ -61,18 +61,38 @@ load_env_file "${PROJECT_DIR}/.env.local"
 load_override_env "${PROJECT_DIR}/docker-compose.override.yml"
 mkdir -p "$STATE_DIR"
 
+extract_json_status() {
+  body="$1"
+  printf '%s' "$body" \
+    | tr -d '\n' \
+    | grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | head -n 1 \
+    | sed 's/.*:[[:space:]]*"\([^"]*\)"/\1/'
+}
+
 # ヘルスエンドポイントを取得
-RESPONSE=$(curl -sf --max-time 10 "${WM_URL}/api/health" 2>/dev/null)
+HTTP_RESPONSE=$(curl -sS --max-time 10 -w '\n__WM_HTTP_CODE__:%{http_code}' "${WM_URL}/api/health" 2>/dev/null)
 CURL_RC=$?
+HTTP_CODE=""
+RESPONSE=""
+
+if [ $CURL_RC -eq 0 ]; then
+  HTTP_CODE=$(printf '%s' "$HTTP_RESPONSE" | sed -n 's/^__WM_HTTP_CODE__:\([0-9][0-9][0-9]\)$/\1/p' | tail -n 1)
+  RESPONSE=$(printf '%s' "$HTTP_RESPONSE" | sed '/^__WM_HTTP_CODE__:[0-9][0-9][0-9]$/d')
+fi
 
 if [ $CURL_RC -ne 0 ]; then
   STATUS="UNREACHABLE"
 else
-  STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | head -1 | sed 's/"status":"//;s/"//')
+  STATUS=$(extract_json_status "$RESPONSE")
   [ -z "$STATUS" ] && STATUS="UNKNOWN"
 fi
 
-echo "${TIMESTAMP} [${STATUS}]"
+if [ -n "$HTTP_CODE" ]; then
+  echo "${TIMESTAMP} [${STATUS}] http=${HTTP_CODE}"
+else
+  echo "${TIMESTAMP} [${STATUS}]"
+fi
 
 PREV_STATUS=""
 LAST_ALERT_EPOCH=0
@@ -105,7 +125,7 @@ esac
 # DEGRADED / UNHEALTHY / UNREACHABLE の場合にアラートを送信
 case "$STATUS" in
   DEGRADED|UNHEALTHY|UNREACHABLE)
-    ALERT_MSG="${TIMESTAMP} World Monitor ALERT: status=${STATUS} url=${WM_URL}"
+    ALERT_MSG="${TIMESTAMP} World Monitor ALERT: status=${STATUS} http=${HTTP_CODE:-000} url=${WM_URL}"
     if [ "$SHOULD_ALERT" -eq 1 ]; then
       echo "ALERT: $ALERT_MSG"
 
@@ -118,7 +138,7 @@ case "$STATUS" in
       if [ -n "$DISCORD_WEBHOOK_URL" ]; then
         curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
           -H 'Content-Type: application/json' \
-          -d "{\"content\":\"🚨 **World Monitor** ヘルスアラート\\nステータス: **${STATUS}**\\n時刻: ${TIMESTAMP}\"}" \
+          -d "{\"content\":\"🚨 **World Monitor** ヘルスアラート\\nステータス: **${STATUS}**\\nHTTP: **${HTTP_CODE:-000}**\\n時刻: ${TIMESTAMP}\"}" \
           --max-time 10 >/dev/null 2>&1
       fi
       LAST_ALERT_EPOCH="$NOW_EPOCH"
@@ -129,7 +149,7 @@ case "$STATUS" in
 esac
 
 if [ "$SHOULD_RESOLVE" -eq 1 ]; then
-  RESOLVED_MSG="${TIMESTAMP} World Monitor RECOVERED: status=${STATUS} url=${WM_URL}"
+  RESOLVED_MSG="${TIMESTAMP} World Monitor RECOVERED: status=${STATUS} http=${HTTP_CODE:-000} url=${WM_URL}"
   echo "RESOLVED: $RESOLVED_MSG"
   if [ -n "$ALERT_EMAIL" ] && command -v mail >/dev/null 2>&1; then
     echo "$RESOLVED_MSG" | mail -s "[WM] Health Recovered: ${STATUS}" "$ALERT_EMAIL"
@@ -137,7 +157,7 @@ if [ "$SHOULD_RESOLVE" -eq 1 ]; then
   if [ -n "$DISCORD_WEBHOOK_URL" ]; then
     curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
       -H 'Content-Type: application/json' \
-      -d "{\"content\":\"✅ **World Monitor** 復旧\\nステータス: **${STATUS}**\\n時刻: ${TIMESTAMP}\"}" \
+      -d "{\"content\":\"✅ **World Monitor** 復旧\\nステータス: **${STATUS}**\\nHTTP: **${HTTP_CODE:-000}**\\n時刻: ${TIMESTAMP}\"}" \
       --max-time 10 >/dev/null 2>&1
   fi
 fi
