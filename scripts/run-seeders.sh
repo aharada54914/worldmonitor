@@ -33,7 +33,7 @@ ok=0 fail=0 skip=0
 
 if [ -f "$SCRIPT_DIR/package.json" ] && { [ ! -f "$SCRIPT_DIR/node_modules/.package-lock.json" ] || [ ! -d "$SCRIPT_DIR/node_modules/fast-xml-parser" ]; }; then
   echo "→ installing scripts dependencies ..."
-  npm ci --prefix "$SCRIPT_DIR" --omit=dev --omit=optional >/tmp/worldmonitor-scripts-npm.log 2>&1 || {
+  npm ci --prefix "$SCRIPT_DIR" --omit=dev --omit=optional --ignore-scripts >/tmp/worldmonitor-scripts-npm.log 2>&1 || {
     echo "FAIL (scripts dependency install failed; see /tmp/worldmonitor-scripts-npm.log)"
     exit 1
   }
