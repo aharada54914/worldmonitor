@@ -4,6 +4,9 @@
   "version": "2.6.5",
   "license": "AGPL-3.0-only",
   "type": "module",
+  "engines": {
+    "node": "^22.0.0 || ^24.0.0"
+  },
   "scripts": {
     "lint": "biome lint ./src ./server ./api ./tests ./e2e ./scripts ./middleware.ts",
     "lint:fix": "biome check ./src ./server ./api ./tests ./e2e ./scripts ./middleware.ts --fix",

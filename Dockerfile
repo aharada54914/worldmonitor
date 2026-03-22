@@ -7,7 +7,7 @@
 # =============================================================================
 
 # ── Stage 1: Builder ─────────────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 ENV NODE_OPTIONS=--max-old-space-size=4096
@@ -28,7 +28,7 @@ RUN node docker/build-handlers.mjs
 RUN npx tsc && npx vite build
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
-FROM node:22-alpine AS final
+FROM node:24-alpine AS final
 
 # nginx + supervisord
 RUN apk add --no-cache nginx supervisor gettext && \

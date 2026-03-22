@@ -3,9 +3,12 @@
 # Multi-stage build for the World Monitor web app (frontend only).
 
 # Stage 1: Build the frontend with TypeScript + Vite.
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
+
+# Node 24 may compile native addons such as utf-8-validate on Alpine.
+RUN apk add --no-cache python3 make g++
 
 # Copy source and build.
 COPY . .
@@ -42,5 +45,3 @@ RUN chmod +x /docker-entrypoint.sh
 EXPOSE 80
 
 CMD ["/docker-entrypoint.sh"]
-
-

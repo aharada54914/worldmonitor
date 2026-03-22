@@ -7,7 +7,7 @@
 # Set AISSTREAM_API_KEY in docker-compose.yml or Railway env.
 # =============================================================================
 
-FROM node:22-alpine
+FROM node:24-alpine
 
 # curl required by OREF polling (Node.js JA3 fingerprint blocked by Akamai; curl passes)
 # python3/make/g++ are required when ws native addons (bufferutil, utf-8-validate)
