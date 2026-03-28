@@ -35,10 +35,14 @@ function parseArgs(argv) {
 function getDiscordRegistrationConfig() {
   const applicationId = String(process.env.DISCORD_APPLICATION_ID || '').trim();
   const botToken = String(process.env.DISCORD_BOT_TOKEN || '').trim();
-  if (!applicationId || !botToken) {
-    throw new Error('Set DISCORD_APPLICATION_ID and DISCORD_BOT_TOKEN first');
+  const clientSecret = String(process.env.DISCORD_CLIENT_SECRET || '').trim();
+  if (!applicationId) {
+    throw new Error('Set DISCORD_APPLICATION_ID first');
   }
-  return { applicationId, botToken };
+  if (!botToken && !clientSecret) {
+    throw new Error('Set DISCORD_BOT_TOKEN or DISCORD_CLIENT_SECRET first');
+  }
+  return { applicationId, botToken, clientSecret };
 }
 
 function getRegistrationUrl(applicationId, guildId) {
@@ -48,11 +52,46 @@ function getRegistrationUrl(applicationId, guildId) {
   return `https://discord.com/api/v10/applications/${applicationId}/commands`;
 }
 
-async function registerCommands(url, botToken) {
+async function fetchClientCredentialsToken(applicationId, clientSecret) {
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    scope: 'applications.commands.update',
+  });
+  const credentials = Buffer.from(`${applicationId}:${clientSecret}`).toString('base64');
+  const response = await fetch('https://discord.com/api/v10/oauth2/token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+    signal: AbortSignal.timeout(15_000),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Discord OAuth HTTP ${response.status}: ${text.slice(0, 300)}`);
+  }
+  const data = text ? JSON.parse(text) : {};
+  const accessToken = String(data.access_token || '').trim();
+  if (!accessToken) {
+    throw new Error('Discord OAuth token response did not include access_token');
+  }
+  return accessToken;
+}
+
+async function getAuthorizationHeader(applicationId, botToken, clientSecret) {
+  if (botToken) {
+    return { value: `Bot ${botToken}`, mode: 'bot_token' };
+  }
+  const accessToken = await fetchClientCredentialsToken(applicationId, clientSecret);
+  return { value: `Bearer ${accessToken}`, mode: 'client_credentials' };
+}
+
+async function registerCommands(url, authorizationHeader) {
   const response = await fetch(url, {
     method: 'PUT',
     headers: {
-      Authorization: `Bot ${botToken}`,
+      Authorization: authorizationHeader,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(DISCORD_SLASH_COMMANDS),
@@ -67,7 +106,7 @@ async function registerCommands(url, botToken) {
 
 async function run() {
   const options = parseArgs(process.argv.slice(2));
-  const { applicationId, botToken } = getDiscordRegistrationConfig();
+  const { applicationId, botToken, clientSecret } = getDiscordRegistrationConfig();
   const url = getRegistrationUrl(applicationId, options.guildId);
 
   if (options.dryRun) {
@@ -75,16 +114,19 @@ async function run() {
       scope: options.guildId ? 'guild' : 'global',
       guildId: options.guildId || null,
       url,
+      authMode: botToken ? 'bot_token' : 'client_credentials',
       commands: DISCORD_SLASH_COMMANDS,
     }, null, 2));
     return;
   }
 
-  const result = await registerCommands(url, botToken);
+  const authorization = await getAuthorizationHeader(applicationId, botToken, clientSecret);
+  const result = await registerCommands(url, authorization.value);
   console.log(JSON.stringify({
     ok: true,
     scope: options.guildId ? 'guild' : 'global',
     guildId: options.guildId || null,
+    authMode: authorization.mode,
     registered: Array.isArray(result) ? result.length : 0,
   }));
 }

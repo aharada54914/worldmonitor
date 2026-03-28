@@ -159,7 +159,7 @@ Required variables:
 
 - `DISCORD_PUBLIC_KEY`
 - `DISCORD_APPLICATION_ID`
-- `DISCORD_BOT_TOKEN`
+- `DISCORD_BOT_TOKEN` or `DISCORD_CLIENT_SECRET`
 
 Optional:
 
@@ -169,18 +169,22 @@ Optional:
 Setup flow:
 
 ```bash
-# 1. Put the bot variables into .env.local or Portainer env
+# 1. Put the application variables into .env.local or export them in your shell
 # 2. Point Discord Interactions Endpoint URL at:
 #    https://YOUR-DOMAIN/api/discord/interactions
 
 # 3. Preview the registration payload
 npm run discord:register:dry-run
 
-# 4. Register commands globally
+# 4. Register commands globally with a bot token
 npm run discord:register
 
+# 4b. Or register commands globally with a client secret
+DISCORD_CLIENT_SECRET=YOUR_CLIENT_SECRET npm run discord:register
+
 # 5. Or register to one guild while testing
-node scripts/discord-register-commands.mjs --guild YOUR_GUILD_ID
+DISCORD_CLIENT_SECRET=YOUR_CLIENT_SECRET \
+  node scripts/discord-register-commands.mjs --guild YOUR_GUILD_ID
 ```
 
 Notes:
