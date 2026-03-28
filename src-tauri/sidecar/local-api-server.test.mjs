@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { generateKeyPairSync, sign as signBuffer } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
 import https from 'node:https';
@@ -58,6 +59,26 @@ async function postJsonViaHttp(url, payload) {
     req.write(body);
     req.end();
   });
+}
+
+function createDiscordInteractionRequest(privateKey, payload, overrides = {}) {
+  const body = JSON.stringify(payload);
+  const timestamp = overrides.timestamp || String(Math.floor(Date.now() / 1000));
+  const signature = signBuffer(null, Buffer.from(`${timestamp}${body}`), privateKey).toString('hex');
+  return {
+    body,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Signature-Ed25519': signature,
+      'X-Signature-Timestamp': timestamp,
+      ...(overrides.headers || {}),
+    },
+  };
+}
+
+function exportDiscordPublicKeyHex(publicKey) {
+  const der = publicKey.export({ format: 'der', type: 'spki' });
+  return Buffer.from(der).subarray(-32).toString('hex');
 }
 
 function mockHttpsRequestOnce({ statusCode, headers, body }) {
@@ -1095,6 +1116,219 @@ test('returns local instance defaults without auth token even when sidecar auth 
     else delete process.env.LOCAL_API_TOKEN;
     await app.close();
     await localApi.cleanup();
+  }
+});
+
+test('responds to Discord PING interactions with PONG', async () => {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const localApi = await setupApiDir({});
+  const originalPublicKey = process.env.DISCORD_PUBLIC_KEY;
+  process.env.DISCORD_PUBLIC_KEY = exportDiscordPublicKeyHex(publicKey);
+
+  const app = await createLocalApiServer({
+    port: 0,
+    apiDir: localApi.apiDir,
+    logger: { log() { }, warn() { }, error() { } },
+  });
+  const { port } = await app.start();
+
+  try {
+    const request = createDiscordInteractionRequest(privateKey, { type: 1 });
+    const response = await fetch(`http://127.0.0.1:${port}/api/discord/interactions`, {
+      method: 'POST',
+      headers: request.headers,
+      body: request.body,
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.type, 1);
+  } finally {
+    if (originalPublicKey !== undefined) process.env.DISCORD_PUBLIC_KEY = originalPublicKey;
+    else delete process.env.DISCORD_PUBLIC_KEY;
+    await app.close();
+    await localApi.cleanup();
+  }
+});
+
+test('rejects Discord interactions with invalid signature', async () => {
+  const { publicKey } = generateKeyPairSync('ed25519');
+  const localApi = await setupApiDir({});
+  const originalPublicKey = process.env.DISCORD_PUBLIC_KEY;
+  process.env.DISCORD_PUBLIC_KEY = exportDiscordPublicKeyHex(publicKey);
+
+  const app = await createLocalApiServer({
+    port: 0,
+    apiDir: localApi.apiDir,
+    logger: { log() { }, warn() { }, error() { } },
+  });
+  const { port } = await app.start();
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/discord/interactions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Signature-Ed25519': '00'.repeat(64),
+        'X-Signature-Timestamp': '1700000000',
+      },
+      body: JSON.stringify({ type: 1 }),
+    });
+    assert.equal(response.status, 401);
+  } finally {
+    if (originalPublicKey !== undefined) process.env.DISCORD_PUBLIC_KEY = originalPublicKey;
+    else delete process.env.DISCORD_PUBLIC_KEY;
+    await app.close();
+    await localApi.cleanup();
+  }
+});
+
+test('handles Discord /help command', async () => {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const localApi = await setupApiDir({});
+  const originalPublicKey = process.env.DISCORD_PUBLIC_KEY;
+  process.env.DISCORD_PUBLIC_KEY = exportDiscordPublicKeyHex(publicKey);
+
+  const app = await createLocalApiServer({
+    port: 0,
+    apiDir: localApi.apiDir,
+    mode: 'docker',
+    logger: { log() { }, warn() { }, error() { } },
+  });
+  const { port } = await app.start();
+
+  try {
+    const request = createDiscordInteractionRequest(privateKey, {
+      type: 2,
+      data: { name: 'help' },
+    });
+    const response = await fetch(`http://127.0.0.1:${port}/api/discord/interactions`, {
+      method: 'POST',
+      headers: request.headers,
+      body: request.body,
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.type, 4);
+    assert.equal(body.data.flags, 64);
+    assert.match(body.data.content, /\/latest/);
+  } finally {
+    if (originalPublicKey !== undefined) process.env.DISCORD_PUBLIC_KEY = originalPublicKey;
+    else delete process.env.DISCORD_PUBLIC_KEY;
+    await app.close();
+    await localApi.cleanup();
+  }
+});
+
+test('handles Discord /health command against local health endpoint', async () => {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const localApi = await setupApiDir({
+    'health.js': `
+      export default async function handler() {
+        return new Response(JSON.stringify({
+          status: 'WARNING',
+          summary: { total: 79, ok: 52, warn: 27, crit: 0 }
+        }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+    `,
+  });
+  const originalPublicKey = process.env.DISCORD_PUBLIC_KEY;
+  process.env.DISCORD_PUBLIC_KEY = exportDiscordPublicKeyHex(publicKey);
+
+  const app = await createLocalApiServer({
+    port: 0,
+    apiDir: localApi.apiDir,
+    mode: 'docker',
+    logger: { log() { }, warn() { }, error() { } },
+  });
+  const { port } = await app.start();
+
+  try {
+    const request = createDiscordInteractionRequest(privateKey, {
+      type: 2,
+      data: { name: 'health' },
+    });
+    const response = await fetch(`http://127.0.0.1:${port}/api/discord/interactions`, {
+      method: 'POST',
+      headers: request.headers,
+      body: request.body,
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.match(body.data.content, /Health: WARNING/);
+    assert.match(body.data.content, /warn: 27/);
+  } finally {
+    if (originalPublicKey !== undefined) process.env.DISCORD_PUBLIC_KEY = originalPublicKey;
+    else delete process.env.DISCORD_PUBLIC_KEY;
+    await app.close();
+    await localApi.cleanup();
+  }
+});
+
+test('handles Discord /latest command from Redis-backed summary', async () => {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const localApi = await setupApiDir({});
+  const originalPublicKey = process.env.DISCORD_PUBLIC_KEY;
+  const originalRedisUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const originalRedisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  process.env.DISCORD_PUBLIC_KEY = exportDiscordPublicKeyHex(publicKey);
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'test-token';
+
+  const redisServer = createServer((req, res) => {
+    if ((req.headers.authorization || '') !== 'Bearer test-token') {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+      return;
+    }
+    const payloads = {
+      '/get/seismology%3Aearthquakes%3Av1': { earthquakes: [{ magnitude: 6.2, place: 'Tokyo Trench', occurredAt: new Date().toISOString() }] },
+      '/get/weather%3Aalerts%3Av1': { alerts: [{ severity: 'SEVERE', event: 'Typhoon', area: 'Okinawa' }] },
+      '/get/military%3Aflights%3Av1': { flights: [{ riskLevel: 'HIGH', callsign: 'RCH123', operator: 'USAF' }] },
+      '/get/market%3Astocks-bootstrap%3Av1': { quotes: [{ symbol: 'NVDA', changePercent: 3.42 }] },
+      '/get/conflict%3Aucdp-events%3Av1': { events: [{ country: 'Sudan', description: 'Escalation near Khartoum', occurredAt: new Date().toISOString() }] },
+    };
+    const payload = payloads[req.url || ''];
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ result: payload ? JSON.stringify(payload) : null }));
+  });
+  const redisPort = await listen(redisServer);
+  process.env.UPSTASH_REDIS_REST_URL = `http://127.0.0.1:${redisPort}`;
+
+  const app = await createLocalApiServer({
+    port: 0,
+    apiDir: localApi.apiDir,
+    mode: 'docker',
+    logger: { log() { }, warn() { }, error() { } },
+  });
+  const { port } = await app.start();
+
+  try {
+    const request = createDiscordInteractionRequest(privateKey, {
+      type: 2,
+      data: { name: 'latest' },
+    });
+    const response = await fetch(`http://127.0.0.1:${port}/api/discord/interactions`, {
+      method: 'POST',
+      headers: request.headers,
+      body: request.body,
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.match(body.data.content, /最新シグナル/);
+    assert.match(body.data.content, /Tokyo Trench/);
+    assert.match(body.data.content, /NVDA \+3.42%/);
+  } finally {
+    if (originalPublicKey !== undefined) process.env.DISCORD_PUBLIC_KEY = originalPublicKey;
+    else delete process.env.DISCORD_PUBLIC_KEY;
+    if (originalRedisUrl !== undefined) process.env.UPSTASH_REDIS_REST_URL = originalRedisUrl;
+    else delete process.env.UPSTASH_REDIS_REST_URL;
+    if (originalRedisToken !== undefined) process.env.UPSTASH_REDIS_REST_TOKEN = originalRedisToken;
+    else delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    await app.close();
+    await localApi.cleanup();
+    await new Promise((resolve, reject) => redisServer.close((error) => (error ? reject(error) : resolve())));
   }
 });
 

@@ -103,6 +103,92 @@ To automate, add a cron job:
 
 For 24/7 VPS operation, keep this cron job for seeders, but do not also schedule `scripts/discord-notify.mjs` from the host if the container is already running it under `supervisord`.
 
+## 💬 Discord Guide Channels
+
+If you run a Discord community, you can now publish pinned guide posts for each channel without adding a bot yet.
+
+Recommended channels:
+
+- `#welcome`
+- `#how-to-use`
+- `#commands`
+- `#ops`
+- `#alerts`
+
+Set one webhook per channel in [.env.example](/Users/jrmag/worldmonitor/.env.example) or Portainer:
+
+- `DISCORD_GUIDE_WEBHOOK_URL_DEFAULT`
+- `DISCORD_GUIDE_WEBHOOK_URL_WELCOME`
+- `DISCORD_GUIDE_WEBHOOK_URL_HOW_TO_USE`
+- `DISCORD_GUIDE_WEBHOOK_URL_COMMANDS`
+- `DISCORD_GUIDE_WEBHOOK_URL_OPS`
+- `DISCORD_GUIDE_WEBHOOK_URL_ALERTS`
+
+Then post the guides:
+
+```bash
+# Preview payloads without sending anything
+npm run discord:guides:dry-run
+
+# Post all guide messages
+npm run discord:guides
+
+# Post only one channel's guide
+node scripts/discord-guide-posts.mjs --channel commands
+```
+
+Important:
+
+- The guide poster itself is **webhook-only**.
+- Slash commands are configured separately in the next section.
+- `alerts` can reuse `DISCORD_WEBHOOK_URL` if you do not set a separate guide webhook for that channel.
+- If you run the poster on the host, provide guide webhook values through shell env vars or `.env.local`. Portainer-managed env vars are available automatically only when you run the command inside the container or stack environment.
+
+## 🤖 Discord Slash Commands
+
+World Monitor can now answer basic Discord slash commands in self-hosted mode.
+
+Supported commands:
+
+- `/help`
+- `/status`
+- `/health`
+- `/latest`
+
+Required variables:
+
+- `DISCORD_PUBLIC_KEY`
+- `DISCORD_APPLICATION_ID`
+- `DISCORD_BOT_TOKEN`
+
+Optional:
+
+- `DISCORD_GUILD_ID`
+  Use this for faster command registration while testing in a single server.
+
+Setup flow:
+
+```bash
+# 1. Put the bot variables into .env.local or Portainer env
+# 2. Point Discord Interactions Endpoint URL at:
+#    https://YOUR-DOMAIN/api/discord/interactions
+
+# 3. Preview the registration payload
+npm run discord:register:dry-run
+
+# 4. Register commands globally
+npm run discord:register
+
+# 5. Or register to one guild while testing
+node scripts/discord-register-commands.mjs --guild YOUR_GUILD_ID
+```
+
+Notes:
+
+- The interaction endpoint verifies Discord Ed25519 signatures before it accepts a request.
+- Responses are currently `ephemeral`, so only the user who ran the command sees them.
+- `/latest` uses cached Redis data. If Redis is empty or seeders have not run yet, it returns a short fallback message instead of hanging.
+
 ### 🔧 Manual seeder invocation
 
 If you prefer to run seeders individually:

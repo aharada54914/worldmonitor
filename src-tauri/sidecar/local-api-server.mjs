@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import http, { createServer } from 'node:http';
 import https from 'node:https';
+import { createPublicKey, verify } from 'node:crypto';
 import dns from 'node:dns/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
@@ -143,7 +144,19 @@ const ALLOWED_ENV_KEYS = new Set([
   'AISSTREAM_API_KEY', 'VITE_WS_RELAY_URL', 'FINNHUB_API_KEY', 'NASA_FIRMS_API_KEY',
   'OLLAMA_API_URL', 'OLLAMA_MODEL', 'WORLDMONITOR_API_KEY', 'WTO_API_KEY',
   'AVIATIONSTACK_API', 'ICAO_API_KEY', 'UCDP_ACCESS_TOKEN',
+  'DISCORD_PUBLIC_KEY', 'DISCORD_APPLICATION_ID', 'DISCORD_BOT_TOKEN', 'DISCORD_GUILD_ID',
 ]);
+
+const DISCORD_VERIFY_KEY_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+const DISCORD_INTERACTION_TYPE = Object.freeze({
+  PING: 1,
+  APPLICATION_COMMAND: 2,
+});
+const DISCORD_INTERACTION_RESPONSE_TYPE = Object.freeze({
+  PONG: 1,
+  CHANNEL_MESSAGE_WITH_SOURCE: 4,
+});
+const DISCORD_EPHEMERAL_FLAG = 1 << 6;
 
 const INSTANCE_DEFAULT_ENV_KEYS = Object.freeze({
   themePreference: 'WM_INSTANCE_THEME',
@@ -604,6 +617,231 @@ async function handleLocalServiceStatus(context) {
     ],
     local: { enabled: true, mode: context.mode, port: context.port, remoteBase: context.remoteBase },
   });
+}
+
+function getDiscordPublicKeyObject() {
+  const publicKeyHex = String(process.env.DISCORD_PUBLIC_KEY || '').trim();
+  if (!/^[0-9a-fA-F]{64}$/.test(publicKeyHex)) return null;
+  try {
+    return createPublicKey({
+      key: Buffer.concat([DISCORD_VERIFY_KEY_PREFIX, Buffer.from(publicKeyHex, 'hex')]),
+      format: 'der',
+      type: 'spki',
+    });
+  } catch {
+    return null;
+  }
+}
+
+function verifyDiscordRequest(signatureHex, timestamp, bodyBuffer) {
+  if (!/^[0-9a-fA-F]{128}$/.test(signatureHex) || !timestamp || !Buffer.isBuffer(bodyBuffer)) {
+    return false;
+  }
+  const publicKey = getDiscordPublicKeyObject();
+  if (!publicKey) return false;
+  const message = Buffer.concat([Buffer.from(String(timestamp)), bodyBuffer]);
+  try {
+    return verify(null, message, publicKey, Buffer.from(signatureHex, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+async function redisGetJson(key) {
+  const url = String(process.env.UPSTASH_REDIS_REST_URL || '').trim();
+  const token = String(process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
+  if (!url || !token) return null;
+  const response = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(2_500),
+  });
+  if (!response.ok) return null;
+  const payload = await response.json();
+  if (!payload?.result) return null;
+  try {
+    return JSON.parse(payload.result);
+  } catch {
+    return null;
+  }
+}
+
+function isRecentTimestamp(value, windowMs) {
+  if (!value) return false;
+  const timestamp = typeof value === 'number' ? value : Date.parse(value);
+  return Number.isFinite(timestamp) && (Date.now() - timestamp) < windowMs;
+}
+
+function truncateDiscordContent(content, limit = 1800) {
+  if (content.length <= limit) return content;
+  return `${content.slice(0, Math.max(0, limit - 1))}…`;
+}
+
+function discordMessagePayload(content) {
+  return {
+    type: DISCORD_INTERACTION_RESPONSE_TYPE.CHANNEL_MESSAGE_WITH_SOURCE,
+    data: {
+      content: truncateDiscordContent(content),
+      flags: DISCORD_EPHEMERAL_FLAG,
+    },
+  };
+}
+
+async function fetchLocalJson(context, pathname) {
+  const headers = {};
+  if (process.env.LOCAL_API_TOKEN) {
+    headers.Authorization = `Bearer ${process.env.LOCAL_API_TOKEN}`;
+  }
+  const response = await fetch(`http://127.0.0.1:${context.port}${pathname}`, {
+    headers,
+    signal: AbortSignal.timeout(2_500),
+  });
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+  return { ok: response.ok, status: response.status, payload, text };
+}
+
+async function buildDiscordLatestSummary() {
+  const results = await Promise.allSettled([
+    redisGetJson('seismology:earthquakes:v1'),
+    redisGetJson('weather:alerts:v1'),
+    redisGetJson('military:flights:v1'),
+    redisGetJson('market:stocks-bootstrap:v1'),
+    redisGetJson('conflict:ucdp-events:v1'),
+  ]);
+
+  const valueOf = (entry) => (entry.status === 'fulfilled' ? entry.value : null);
+  const [earthquakesRaw, weatherRaw, flightsRaw, marketRaw, conflictRaw] = results;
+
+  const earthquakes = (valueOf(earthquakesRaw)?.earthquakes ?? [])
+    .filter((entry) => Number(entry?.magnitude) >= 5 && isRecentTimestamp(entry?.occurredAt, 24 * 60 * 60 * 1000))
+    .sort((left, right) => Number(right?.magnitude || 0) - Number(left?.magnitude || 0))
+    .slice(0, 2)
+    .map((entry) => `地震 M${entry.magnitude} ${entry.place || 'location unknown'}`);
+
+  const weather = (valueOf(weatherRaw)?.alerts ?? [])
+    .filter((entry) => ['EXTREME', 'SEVERE'].includes(String(entry?.severity || '')))
+    .slice(0, 2)
+    .map((entry) => `気象 ${entry.event || 'alert'} ${entry.area || ''}`.trim());
+
+  const flights = (valueOf(flightsRaw)?.flights ?? [])
+    .filter((entry) => String(entry?.riskLevel || '') === 'HIGH')
+    .slice(0, 2)
+    .map((entry) => `軍用機 ${entry.callsign || '?'} ${entry.operator || entry.country || ''}`.trim());
+
+  const movers = (valueOf(marketRaw)?.quotes ?? valueOf(marketRaw)?.stocks ?? [])
+    .filter((entry) => typeof entry?.changePercent === 'number' && Math.abs(entry.changePercent) >= 2)
+    .sort((left, right) => Math.abs(Number(right.changePercent)) - Math.abs(Number(left.changePercent)))
+    .slice(0, 2)
+    .map((entry) => `市場 ${entry.symbol || entry.ticker || '?'} ${entry.changePercent >= 0 ? '+' : ''}${entry.changePercent.toFixed(2)}%`);
+
+  const conflicts = (valueOf(conflictRaw)?.events ?? [])
+    .filter((entry) => isRecentTimestamp(entry?.date || entry?.occurredAt, 7 * 24 * 60 * 60 * 1000))
+    .slice(0, 2)
+    .map((entry) => `紛争 ${entry.country || ''} ${(entry.description || '').slice(0, 50)}`.trim());
+
+  const lines = [...earthquakes, ...weather, ...flights, ...movers, ...conflicts].slice(0, 6);
+  if (lines.length === 0) {
+    return '最新シグナルはまだ十分に集まっていません。seed と Redis 状態を確認してください。';
+  }
+  return ['最新シグナル', ...lines.map((line) => `- ${line}`)].join('\n');
+}
+
+async function handleDiscordApplicationCommand(interaction, context) {
+  const commandName = String(interaction?.data?.name || '').toLowerCase();
+  switch (commandName) {
+    case 'help':
+      return discordMessagePayload([
+        'World Monitor slash commands',
+        '- /help 使い方とコマンド一覧',
+        '- /status self-hosted 構成の基本状態',
+        '- /health 現在の health 判定',
+        '- /latest 最新の重要シグナル',
+        'ガイド投稿は #welcome #how-to-use #commands #ops #alerts を参照してください。',
+      ].join('\n'));
+
+    case 'status':
+      return discordMessagePayload([
+        'World Monitor status',
+        `- mode: ${context.mode}`,
+        `- local api: 127.0.0.1:${context.port}`,
+        `- routes: ${context.routeCount || 0}`,
+        `- redis: ${process.env.UPSTASH_REDIS_REST_URL ? 'configured' : 'missing'}`,
+        `- relay: ${process.env.WS_RELAY_URL ? 'configured' : 'missing'}`,
+        `- slash config: ${process.env.DISCORD_PUBLIC_KEY && process.env.DISCORD_APPLICATION_ID ? 'configured' : 'partial'}`,
+        '- service: worldmonitor.service',
+      ].join('\n'));
+
+    case 'health': {
+      const health = await fetchLocalJson(context, '/api/health').catch(() => null);
+      if (health?.payload?.status && health?.payload?.summary) {
+        const summary = health.payload.summary;
+        return discordMessagePayload([
+          `Health: ${health.payload.status} (HTTP ${health.status})`,
+          `- ok: ${summary.ok ?? 0}`,
+          `- warn: ${summary.warn ?? 0}`,
+          `- crit: ${summary.crit ?? 0}`,
+          `- total: ${summary.total ?? 0}`,
+        ].join('\n'));
+      }
+      const fallback = await fetchLocalJson(context, '/api/service-status').catch(() => null);
+      if (fallback?.payload?.summary) {
+        const summary = fallback.payload.summary;
+        return discordMessagePayload([
+          'Health endpoint unavailable; local service-status used instead',
+          `- operational: ${summary.operational ?? 0}`,
+          `- degraded: ${summary.degraded ?? 0}`,
+          `- outage: ${summary.outage ?? 0}`,
+          `- unknown: ${summary.unknown ?? 0}`,
+        ].join('\n'));
+      }
+      return discordMessagePayload('Health 情報を取得できませんでした。`systemctl status worldmonitor` と `docker compose ps` を確認してください。');
+    }
+
+    case 'latest':
+      return discordMessagePayload(await buildDiscordLatestSummary());
+
+    default:
+      return discordMessagePayload(`未知のコマンドです: /${commandName || 'unknown'}`);
+  }
+}
+
+async function handleDiscordInteractions(req, context) {
+  if (req.method !== 'POST') {
+    return json({ error: 'POST required' }, 405);
+  }
+
+  const body = await readBody(req);
+  if (!body) {
+    return json({ error: 'Missing body' }, 400);
+  }
+
+  const signature = String(req.headers['x-signature-ed25519'] || '');
+  const timestamp = String(req.headers['x-signature-timestamp'] || '');
+  if (!verifyDiscordRequest(signature, timestamp, body)) {
+    return json({ error: 'Invalid request signature' }, 401);
+  }
+
+  let interaction = null;
+  try {
+    interaction = JSON.parse(body.toString('utf8'));
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  if (interaction?.type === DISCORD_INTERACTION_TYPE.PING) {
+    return json({ type: DISCORD_INTERACTION_RESPONSE_TYPE.PONG });
+  }
+
+  if (interaction?.type === DISCORD_INTERACTION_TYPE.APPLICATION_COMMAND) {
+    return json(await handleDiscordApplicationCommand(interaction, context));
+  }
+
+  return json(discordMessagePayload('この interaction type はまだ未対応です。'));
 }
 
 async function tryCloudFallback(requestUrl, req, context, reason) {
@@ -1074,6 +1312,10 @@ async function dispatch(requestUrl, req, routes, context) {
     return new Response(null, { status: 204, headers: makeCorsHeaders(req) });
   }
 
+  if (requestUrl.pathname === '/api/discord/interactions') {
+    return handleDiscordInteractions(req, context);
+  }
+
   // Health check — exempt from auth to support external monitoring tools
   if (requestUrl.pathname === '/api/service-status') {
     return handleLocalServiceStatus(context);
@@ -1491,6 +1733,7 @@ export async function createLocalApiServer(options = {}) {
   const context = resolveConfig(options);
   loadVerboseState(context.dataDir);
   const routes = await buildRouteTable(context.apiDir);
+  context.routeCount = routes.length;
 
   const server = createServer(async (req, res) => {
     const requestUrl = new URL(req.url || '/', `http://127.0.0.1:${context.port}`);
@@ -1507,7 +1750,8 @@ export async function createLocalApiServer(options = {}) {
       || requestUrl.pathname === '/api/local-debug-toggle'
       || requestUrl.pathname === '/api/local-env-update'
       || requestUrl.pathname === '/api/local-env-update-batch'
-      || requestUrl.pathname === '/api/local-validate-secret';
+      || requestUrl.pathname === '/api/local-validate-secret'
+      || requestUrl.pathname === '/api/discord/interactions';
 
     try {
       const response = await dispatch(requestUrl, req, routes, context);
