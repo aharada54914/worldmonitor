@@ -16,7 +16,7 @@
  * 任意環境変数:
  *   OPENROUTER_API_KEY              Gemini が使えない場合のフォールバック
  *   GEMINI_MODEL                    デフォルト: gemini-2.0-flash
- *   DISCORD_NOTIFY_INTERVAL_MINUTES 通知間隔(分) デフォルト: 60
+ *   DISCORD_NOTIFY_INTERVAL_MINUTES 通知間隔(分) デフォルト: 360 (6時間)
  *   DISCORD_NOTIFY_LANGUAGE         ja | en  デフォルト: ja
  *   UPSTASH_REDIS_REST_URL          Redis REST プロキシ URL
  *   UPSTASH_REDIS_REST_TOKEN        Redis REST トークン
@@ -33,7 +33,7 @@ const GEMINI_API_KEY      = process.env.GEMINI_API_KEY;
 const OPENROUTER_API_KEY  = process.env.OPENROUTER_API_KEY;
 const GEMINI_MODEL        = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const LANGUAGE            = (process.env.DISCORD_NOTIFY_LANGUAGE || 'ja').toLowerCase();
-const INTERVAL_MIN        = Math.max(1, parseInt(process.env.DISCORD_NOTIFY_INTERVAL_MINUTES || '60', 10));
+const INTERVAL_MIN        = Math.max(1, parseInt(process.env.DISCORD_NOTIFY_INTERVAL_MINUTES || '360', 10));
 const IS_DAEMON           = process.argv.includes('--daemon');
 
 const COLOR = {

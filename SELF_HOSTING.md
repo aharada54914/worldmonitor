@@ -103,6 +103,8 @@ To automate, add a cron job:
 
 For 24/7 VPS operation, keep this cron job for seeders, but do not also schedule `scripts/discord-notify.mjs` from the host if the container is already running it under `supervisord`.
 
+If you use the built-in Discord digest daemon, the default post cadence is now **every 6 hours**. Override it with `DISCORD_NOTIFY_INTERVAL_MINUTES` if you want a different interval.
+
 ## 💬 Discord Guide Channels
 
 If you run a Discord community, you can now publish pinned guide posts for each channel without adding a bot yet.
