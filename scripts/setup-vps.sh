@@ -133,7 +133,7 @@ cat >> "$CRON_TMP" <<EOF
 */30 * * * * cd ${REPO_DIR} && ./scripts/run-seeders.sh >> /var/log/worldmonitor-seed.log 2>&1
 
 # World Monitor — ヘルスチェック (2分ごと)
-*/2 * * * * ${REPO_DIR}/scripts/health-check.sh >> /var/log/worldmonitor-health.log 2>&1
+*/2 * * * * WM_HEALTH_PATH='/api/health?compact=1' ${REPO_DIR}/scripts/health-check.sh >> /var/log/worldmonitor-health.log 2>&1
 
 # World Monitor — ログローテーション (週1回)
 0 3 * * 0 truncate -s 0 /var/log/worldmonitor-seed.log /var/log/worldmonitor-health.log

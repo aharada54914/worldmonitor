@@ -246,6 +246,7 @@ export default async function handler(req) {
     'Content-Type': 'application/json',
     'Cache-Control': 'private, no-store, max-age=0',
     'CDN-Cache-Control': 'no-store',
+    'CF-Cache-Status': 'BYPASS',
     'Access-Control-Allow-Origin': '*',
   };
 
@@ -269,9 +270,13 @@ export default async function handler(req) {
   } catch (err) {
     return jsonResponse({
       status: 'REDIS_DOWN',
+      availabilityStatus: 'DOWN',
+      dataStatus: 'UNKNOWN',
+      alertSeverity: 'page',
+      shouldPage: true,
       error: err.message,
       checkedAt: new Date(now).toISOString(),
-    }, 503, headers);
+    }, 200, headers);
   }
 
   const keyValues = new Map();
@@ -448,6 +453,7 @@ export default async function handler(req) {
   // On-demand keys that simply haven't been requested yet should not affect overall status.
   const onDemandWarnCount = Object.values(checks).filter(c => c.status === 'EMPTY_ON_DEMAND').length;
   const realWarnCount = warnCount - onDemandWarnCount;
+  const staleSeedCount = Object.values(checks).filter(c => c.status === 'STALE_SEED').length;
 
   let overall;
   if (critCount === 0 && realWarnCount === 0) overall = 'HEALTHY';
@@ -455,17 +461,27 @@ export default async function handler(req) {
   else if (critCount <= 3) overall = 'DEGRADED';
   else overall = 'UNHEALTHY';
 
-  const httpStatus = overall === 'HEALTHY' || overall === 'WARNING' ? 200 : 503;
+  // Data freshness problems should be visible in health output, but they should
+  // not page Discord by default. The health-check script consumes shouldPage.
+  const shouldPage = false;
+  const httpStatus = 200;
 
   const url = new URL(req.url);
   const compact = url.searchParams.get('compact') === '1';
 
   const body = {
     status: overall,
+    availabilityStatus: 'UP',
+    dataStatus: overall,
+    alertSeverity: shouldPage ? 'page' : overall === 'HEALTHY' ? 'none' : 'data',
+    shouldPage,
     summary: {
       total: totalChecks,
       ok: okCount,
       warn: warnCount,
+      onDemandWarn: onDemandWarnCount,
+      realWarn: realWarnCount,
+      staleSeed: staleSeedCount,
       crit: critCount,
     },
     checkedAt: new Date(now).toISOString(),

@@ -9,11 +9,12 @@
 #
 # 環境変数:
 #   WM_URL              監視対象 URL (デフォルト: http://localhost:3000)
-#   ALERT_EMAIL         DEGRADED/UNHEALTHY 時の通知先メールアドレス
+#   ALERT_EMAIL         重大障害時の通知先メールアドレス
 #   DISCORD_WEBHOOK_URL Discord への障害通知 (設定している場合)
 
 WM_URL="${WM_URL:-http://localhost:3000}"
-ALERT_COOLDOWN_MINUTES="${HEALTH_ALERT_COOLDOWN_MINUTES:-30}"
+HEALTH_PATH="${WM_HEALTH_PATH:-/api/health?compact=1}"
+ALERT_REPEAT_MINUTES="${HEALTH_ALERT_REPEAT_MINUTES:-0}"
 STATE_DIR="${WM_STATE_DIR:-/tmp/worldmonitor}"
 STATE_FILE="${STATE_DIR}/health-check.state"
 TIMESTAMP="$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')"
@@ -70,7 +71,17 @@ extract_json_status() {
     | sed 's/.*:[[:space:]]*"\([^"]*\)"/\1/'
 }
 
-is_alert_status() {
+extract_json_bool() {
+  body="$1"
+  key="$2"
+  printf '%s' "$body" \
+    | tr -d '\n' \
+    | grep -o "\"$key\"[[:space:]]*:[[:space:]]*\\(true\\|false\\)" \
+    | head -n 1 \
+    | sed 's/.*:[[:space:]]*//'
+}
+
+is_page_status() {
   case "$1" in
     UNHEALTHY|UNREACHABLE) return 0 ;;
     *) return 1 ;;
@@ -78,10 +89,11 @@ is_alert_status() {
 }
 
 # ヘルスエンドポイントを取得
-HTTP_RESPONSE=$(curl -sS --max-time 10 -w '\n__WM_HTTP_CODE__:%{http_code}' "${WM_URL}/api/health" 2>/dev/null)
+HTTP_RESPONSE=$(curl -sS --max-time 10 -w '\n__WM_HTTP_CODE__:%{http_code}' "${WM_URL}${HEALTH_PATH}" 2>/dev/null)
 CURL_RC=$?
 HTTP_CODE=""
 RESPONSE=""
+SHOULD_PAGE=0
 
 if [ $CURL_RC -eq 0 ]; then
   HTTP_CODE=$(printf '%s' "$HTTP_RESPONSE" | sed -n 's/^__WM_HTTP_CODE__:\([0-9][0-9][0-9]\)$/\1/p' | tail -n 1)
@@ -90,15 +102,22 @@ fi
 
 if [ $CURL_RC -ne 0 ]; then
   STATUS="UNREACHABLE"
+  SHOULD_PAGE=1
 else
   STATUS=$(extract_json_status "$RESPONSE")
   [ -z "$STATUS" ] && STATUS="UNKNOWN"
+  PAGE_FLAG=$(extract_json_bool "$RESPONSE" "shouldPage")
+  [ "$PAGE_FLAG" = "true" ] && SHOULD_PAGE=1
+  if [ "$STATUS" = "UNKNOWN" ] && [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" -ge 500 ]; then
+    STATUS="UNREACHABLE"
+    SHOULD_PAGE=1
+  fi
 fi
 
 if [ -n "$HTTP_CODE" ]; then
-  echo "${TIMESTAMP} [${STATUS}] http=${HTTP_CODE}"
+  echo "${TIMESTAMP} [${STATUS}] http=${HTTP_CODE} shouldPage=${SHOULD_PAGE}"
 else
-  echo "${TIMESTAMP} [${STATUS}]"
+  echo "${TIMESTAMP} [${STATUS}] shouldPage=${SHOULD_PAGE}"
 fi
 
 PREV_STATUS=""
@@ -108,61 +127,44 @@ if [ -f "$STATE_FILE" ]; then
 fi
 
 NOW_EPOCH=$(date +%s 2>/dev/null || printf '0')
-COOLDOWN_SECONDS=$((ALERT_COOLDOWN_MINUTES * 60))
+REPEAT_SECONDS=$((ALERT_REPEAT_MINUTES * 60))
 SHOULD_ALERT=0
 SHOULD_RESOLVE=0
 
-case "$STATUS" in
-  DEGRADED|UNHEALTHY|UNREACHABLE)
-    if ! is_alert_status "$STATUS"; then
-      SHOULD_ALERT=0
-      if is_alert_status "$PREV_STATUS"; then
-        SHOULD_RESOLVE=1
-      fi
-    else
-      if [ "$PREV_STATUS" != "$STATUS" ]; then
-        SHOULD_ALERT=1
-      elif [ "${NOW_EPOCH:-0}" -ge $(( ${LAST_ALERT_EPOCH:-0} + COOLDOWN_SECONDS )) ]; then
-        SHOULD_ALERT=1
-      fi
-    fi
-    ;;
-  *)
-    if is_alert_status "$PREV_STATUS"; then
-      SHOULD_RESOLVE=1
-    fi
-    ;;
-esac
+if [ "$SHOULD_PAGE" -eq 1 ]; then
+  if [ "$PREV_STATUS" != "$STATUS" ]; then
+    SHOULD_ALERT=1
+  elif [ "$ALERT_REPEAT_MINUTES" -gt 0 ] && [ "${NOW_EPOCH:-0}" -ge $(( ${LAST_ALERT_EPOCH:-0} + REPEAT_SECONDS )) ]; then
+    SHOULD_ALERT=1
+  fi
+elif is_page_status "$PREV_STATUS" && [ "${LAST_ALERT_EPOCH:-0}" -gt 0 ]; then
+  SHOULD_RESOLVE=1
+fi
 
-# DEGRADED / UNHEALTHY / UNREACHABLE の場合にアラートを送信
-case "$STATUS" in
-  DEGRADED|UNHEALTHY|UNREACHABLE)
-    if ! is_alert_status "$STATUS"; then
-      echo "ALERT SKIPPED: status=${STATUS} notify-policy=severe-only"
-    else
-      ALERT_MSG="${TIMESTAMP} World Monitor ALERT: status=${STATUS} http=${HTTP_CODE:-000} url=${WM_URL}"
-      if [ "$SHOULD_ALERT" -eq 1 ]; then
-        echo "ALERT: $ALERT_MSG"
+if [ "$SHOULD_PAGE" -eq 1 ]; then
+  ALERT_MSG="${TIMESTAMP} World Monitor ALERT: status=${STATUS} http=${HTTP_CODE:-000} url=${WM_URL}"
+  if [ "$SHOULD_ALERT" -eq 1 ]; then
+    echo "ALERT: $ALERT_MSG"
 
-        # メール通知 (mailutils/sendmail が使える場合)
-        if [ -n "$ALERT_EMAIL" ] && command -v mail >/dev/null 2>&1; then
-          echo "$ALERT_MSG" | mail -s "[WM] Health Alert: ${STATUS}" "$ALERT_EMAIL"
-        fi
-
-        # Discord 通知 (DISCORD_WEBHOOK_URL が設定されている場合)
-        if [ -n "$DISCORD_WEBHOOK_URL" ]; then
-          curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
-            -H 'Content-Type: application/json' \
-            -d "{\"content\":\"🚨 **World Monitor** ヘルスアラート\\nステータス: **${STATUS}**\\nHTTP: **${HTTP_CODE:-000}**\\n時刻: ${TIMESTAMP}\"}" \
-            --max-time 10 >/dev/null 2>&1
-        fi
-        LAST_ALERT_EPOCH="$NOW_EPOCH"
-      else
-        echo "ALERT SUPPRESSED: status=${STATUS} cooldown=${ALERT_COOLDOWN_MINUTES}m"
-      fi
+    # メール通知 (mailutils/sendmail が使える場合)
+    if [ -n "$ALERT_EMAIL" ] && command -v mail >/dev/null 2>&1; then
+      echo "$ALERT_MSG" | mail -s "[WM] Health Alert: ${STATUS}" "$ALERT_EMAIL"
     fi
-    ;;
-esac
+
+    # Discord 通知 (DISCORD_WEBHOOK_URL が設定されている場合)
+    if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+      curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
+        -H 'Content-Type: application/json' \
+        -d "{\"content\":\"🚨 **World Monitor** ヘルスアラート\\nステータス: **${STATUS}**\\nHTTP: **${HTTP_CODE:-000}**\\n時刻: ${TIMESTAMP}\"}" \
+        --max-time 10 >/dev/null 2>&1
+    fi
+    LAST_ALERT_EPOCH="$NOW_EPOCH"
+  else
+    echo "ALERT SUPPRESSED: status=${STATUS} repeat=${ALERT_REPEAT_MINUTES}m"
+  fi
+elif [ "$STATUS" = "DEGRADED" ] || [ "$STATUS" = "WARNING" ] || [ "$STATUS" = "UNHEALTHY" ]; then
+  echo "ALERT SKIPPED: status=${STATUS} shouldPage=${SHOULD_PAGE}"
+fi
 
 if [ "$SHOULD_RESOLVE" -eq 1 ]; then
   RESOLVED_MSG="${TIMESTAMP} World Monitor RECOVERED: status=${STATUS} http=${HTTP_CODE:-000} url=${WM_URL}"
