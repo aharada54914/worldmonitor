@@ -17,6 +17,7 @@ const { readFileSync } = require('fs');
 const crypto = require('crypto');
 const v8 = require('v8');
 const { WebSocketServer, WebSocket } = require('ws');
+const { parseProxyConfig, proxyConnectTunnel, proxyFetch } = require('./_proxy-utils.cjs');
 
 const httpsKeepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 6, timeout: 60_000 });
 
@@ -3574,24 +3575,49 @@ async function seedUsaSpending() {
   try {
     const periodStart = getDateDaysAgo(7);
     const periodEnd = new Date().toISOString().split('T')[0];
-    const resp = await fetch('https://api.usaspending.gov/api/v2/search/spending_by_award/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': CHROME_UA },
-      signal: AbortSignal.timeout(20_000),
-      body: JSON.stringify({
-        filters: {
-          time_period: [{ start_date: periodStart, end_date: periodEnd }],
-          award_type_codes: ['A', 'B', 'C', 'D'],
-        },
-        fields: ['Award ID', 'Recipient Name', 'Award Amount', 'Awarding Agency', 'Description', 'Start Date', 'Award Type'],
-        limit: 15, order: 'desc', sort: 'Award Amount',
-      }),
+    const spendingUrl = 'https://api.usaspending.gov/api/v2/search/spending_by_award/';
+    const spendingBody = JSON.stringify({
+      filters: {
+        time_period: [{ start_date: periodStart, end_date: periodEnd }],
+        award_type_codes: ['A', 'B', 'C', 'D'],
+      },
+      fields: ['Award ID', 'Recipient Name', 'Award Amount', 'Awarding Agency', 'Description', 'Start Date', 'Award Type'],
+      limit: 15, order: 'desc', sort: 'Award Amount',
     });
-    if (!resp.ok) {
-      console.warn(`[Spending] Seed failed: HTTP ${resp.status}`);
-      return;
+    let data;
+    try {
+      const resp = await fetch(spendingUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'User-Agent': CHROME_UA },
+        signal: AbortSignal.timeout(20_000),
+        body: spendingBody,
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      data = await resp.json();
+    } catch (directErr) {
+      if (!PROXY_URL) {
+        console.warn(`[Spending] Seed failed: ${directErr.message}`);
+        return;
+      }
+      console.warn(`[Spending] Direct failed (${directErr.message}) — retrying via proxy`);
+      const proxy = parseProxyUrl(PROXY_URL);
+      if (!proxy) {
+        console.warn('[Spending] Proxy fallback unavailable: invalid PROXY_URL');
+        return;
+      }
+      const result = await proxyFetch(spendingUrl, proxy, {
+        method: 'POST',
+        body: spendingBody,
+        headers: { 'Content-Type': 'application/json', 'User-Agent': CHROME_UA },
+        accept: 'application/json',
+        timeoutMs: 20_000,
+      });
+      if (!result.ok) {
+        console.warn(`[Spending] Proxy also failed: HTTP ${result.status}`);
+        return;
+      }
+      data = JSON.parse(result.buffer.toString('utf8'));
     }
-    const data = await resp.json();
     const results = data.results || [];
     const awards = results.map((r) => ({
       id: String(r['Award ID'] || ''),
@@ -5864,41 +5890,9 @@ async function getOpenSkyToken() {
 
 function _openskyProxyConnect(targetHost, targetPort, timeoutMs = 10000) {
   if (!OPENSKY_PROXY_ENABLED) return Promise.resolve(null);
-  const atIdx = OPENSKY_PROXY_AUTH.lastIndexOf('@');
-  if (atIdx === -1) return Promise.resolve(null);
-  const userPass = OPENSKY_PROXY_AUTH.substring(0, atIdx);
-  const hostPort = OPENSKY_PROXY_AUTH.substring(atIdx + 1);
-  const colonIdx = hostPort.lastIndexOf(':');
-  const proxyHost = hostPort.substring(0, colonIdx);
-  const proxyPort = parseInt(hostPort.substring(colonIdx + 1), 10);
-
-  return new Promise((resolve, reject) => {
-    const connectReq = http.request({
-      host: proxyHost,
-      port: proxyPort,
-      method: 'CONNECT',
-      path: `${targetHost}:${targetPort}`,
-      headers: {
-        'Host': `${targetHost}:${targetPort}`,
-        'Proxy-Authorization': 'Basic ' + Buffer.from(userPass).toString('base64'),
-      },
-      timeout: timeoutMs,
-    });
-    connectReq.on('connect', (res, socket) => {
-      if (res.statusCode !== 200) {
-        socket.destroy();
-        return reject(new Error(`CONNECT ${res.statusCode}`));
-      }
-      const tls = require('tls');
-      const tlsSocket = tls.connect({ socket, servername: targetHost }, () => {
-        resolve(tlsSocket);
-      });
-      tlsSocket.on('error', reject);
-    });
-    connectReq.on('error', reject);
-    connectReq.on('timeout', () => { connectReq.destroy(); reject(new Error('CONNECT timeout')); });
-    connectReq.end();
-  });
+  const proxyConfig = parseProxyConfig(OPENSKY_PROXY_AUTH);
+  if (!proxyConfig) return Promise.resolve(null);
+  return proxyConnectTunnel(targetHost, proxyConfig, { timeoutMs, targetPort }).then(({ socket }) => socket);
 }
 
 function _attemptOpenSkyTokenFetch(clientId, clientSecret) {
@@ -6886,56 +6880,19 @@ function handleAviationStackRequest(req, res) {
 const YOUTUBE_PROXY_URL = process.env.YOUTUBE_PROXY_URL || '';
 
 function parseProxyUrl(proxyUrl) {
-  if (!proxyUrl) return null;
-  try {
-    const u = new URL(proxyUrl);
-    return {
-      host: u.hostname,
-      port: parseInt(u.port, 10),
-      auth: u.username ? `${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}` : null,
-    };
-  } catch { return null; }
+  return parseProxyConfig(proxyUrl);
 }
 
 function ytFetchViaProxy(targetUrl, proxy) {
-  return new Promise((resolve, reject) => {
-    const target = new URL(targetUrl);
-    const connectOpts = {
-      host: proxy.host, port: proxy.port, method: 'CONNECT',
-      path: `${target.hostname}:443`, headers: {},
-    };
-    if (proxy.auth) {
-      connectOpts.headers['Proxy-Authorization'] = 'Basic ' + Buffer.from(proxy.auth).toString('base64');
-    }
-    const connectReq = http.request(connectOpts);
-    connectReq.on('connect', (_res, socket) => {
-      const req = https.request({
-        hostname: target.hostname,
-        path: target.pathname + target.search,
-        method: 'GET',
-        headers: { 'User-Agent': CHROME_UA, 'Accept-Encoding': 'gzip, deflate' },
-        socket, agent: false,
-      }, (res) => {
-        let stream = res;
-        const enc = (res.headers['content-encoding'] || '').trim().toLowerCase();
-        if (enc === 'gzip') stream = res.pipe(zlib.createGunzip());
-        else if (enc === 'deflate') stream = res.pipe(zlib.createInflate());
-        const chunks = [];
-        stream.on('data', (c) => chunks.push(c));
-        stream.on('end', () => resolve({
-          ok: res.statusCode >= 200 && res.statusCode < 300,
-          status: res.statusCode,
-          body: Buffer.concat(chunks).toString(),
-        }));
-        stream.on('error', reject);
-      });
-      req.on('error', reject);
-      req.end();
-    });
-    connectReq.on('error', reject);
-    connectReq.setTimeout(12000, () => { connectReq.destroy(); reject(new Error('Proxy timeout')); });
-    connectReq.end();
-  });
+  return proxyFetch(targetUrl, proxy, {
+    headers: { 'User-Agent': CHROME_UA },
+    accept: 'text/html,application/xhtml+xml',
+    timeoutMs: 12_000,
+  }).then((result) => ({
+    ok: result.ok,
+    status: result.status,
+    body: result.buffer.toString('utf8'),
+  }));
 }
 
 function ytFetchDirect(targetUrl) {

@@ -2,9 +2,7 @@
 
 import { loadEnvFile, CHROME_UA, getRedisCredentials, acquireLockSafely, releaseLock, withRetry, writeFreshnessMetadata, logSeedResult, verifySeedKey, extendExistingTtl } from './_seed-utils.mjs';
 import { summarizeMilitaryTheaters, buildMilitarySurges, appendMilitaryHistory } from './_military-surges.mjs';
-import http from 'node:http';
-import https from 'node:https';
-import tls from 'node:tls';
+import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 loadEnvFile(import.meta.url);
@@ -493,77 +491,29 @@ function redactProxy(msg) {
 }
 
 function parseProxyAuth() {
-  const atIdx = OPENSKY_PROXY_AUTH.lastIndexOf('@');
-  if (atIdx === -1) return null;
-  const userPass = OPENSKY_PROXY_AUTH.substring(0, atIdx);
-  const hostPort = OPENSKY_PROXY_AUTH.substring(atIdx + 1);
-  const colonIdx = hostPort.lastIndexOf(':');
-  return {
-    userPass,
-    host: hostPort.substring(0, colonIdx),
-    port: parseInt(hostPort.substring(colonIdx + 1), 10),
-  };
+  const { parseProxyConfig } = createRequire(import.meta.url)('./_proxy-utils.cjs');
+  return parseProxyConfig(OPENSKY_PROXY_AUTH);
 }
 
-function proxyFetchJson(url, { headers = {}, timeout = 15000, method = 'GET', body = null } = {}) {
-  const parsed = new URL(url);
+async function proxyFetchJson(url, { headers = {}, timeout = 15000, method = 'GET', body = null } = {}) {
+  const { proxyFetch } = createRequire(import.meta.url)('./_proxy-utils.cjs');
   const proxy = parseProxyAuth();
-  if (!proxy) return Promise.reject(new Error('No proxy config'));
-
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { reject(new Error('PROXY TIMEOUT')); }, timeout + 5000);
-    const connectReq = http.request({
-      host: proxy.host,
-      port: proxy.port,
-      method: 'CONNECT',
-      path: `${parsed.hostname}:443`,
-      headers: {
-        'Host': `${parsed.hostname}:443`,
-        'Proxy-Authorization': 'Basic ' + Buffer.from(proxy.userPass).toString('base64'),
-      },
-      timeout,
-    });
-    connectReq.on('connect', (res, socket) => {
-      if (res.statusCode !== 200) {
-        clearTimeout(timer);
-        socket.destroy();
-        return reject(new Error(`CONNECT ${res.statusCode}`));
-      }
-      const tlsSocket = tls.connect({ socket, servername: parsed.hostname }, () => {
-        const requestHeaders = { ...headers, 'Accept': 'application/json', 'User-Agent': CHROME_UA };
-        if (body != null && !Object.keys(requestHeaders).some((k) => k.toLowerCase() === 'content-length')) {
-          requestHeaders['Content-Length'] = Buffer.byteLength(body);
-        }
-        const req = https.request({
-          socket: tlsSocket,
-          hostname: parsed.hostname,
-          path: parsed.pathname + parsed.search,
-          method,
-          headers: requestHeaders,
-          timeout,
-        }, (resp) => {
-          let data = '';
-          resp.on('data', chunk => data += chunk);
-          resp.on('end', () => {
-            clearTimeout(timer);
-            if (resp.statusCode >= 400) {
-              return reject(new Error(`HTTP ${resp.statusCode}: ${data.substring(0, 200)}`));
-            }
-            try { resolve(JSON.parse(data)); }
-            catch (e) { reject(new Error(`JSON parse: ${e.message}`)); }
-          });
-        });
-        req.on('error', (e) => { clearTimeout(timer); reject(e); });
-        req.on('timeout', () => { req.destroy(); clearTimeout(timer); reject(new Error('TIMEOUT')); });
-        if (body != null) req.write(body);
-        req.end();
-      });
-      tlsSocket.on('error', (e) => { clearTimeout(timer); reject(e); });
-    });
-    connectReq.on('error', (e) => { clearTimeout(timer); reject(new Error(redactProxy(e.message))); });
-    connectReq.on('timeout', () => { connectReq.destroy(); clearTimeout(timer); reject(new Error('CONNECT TIMEOUT')); });
-    connectReq.end();
+  if (!proxy) throw new Error('No proxy config');
+  const result = await proxyFetch(url, proxy, {
+    headers: { 'User-Agent': CHROME_UA, ...headers },
+    method,
+    body,
+    accept: 'application/json',
+    timeoutMs: timeout,
   });
+  if (!result.ok) {
+    throw new Error(`HTTP ${result.status}: ${result.buffer.toString('utf8').slice(0, 200)}`);
+  }
+  try {
+    return JSON.parse(result.buffer.toString('utf8'));
+  } catch (error) {
+    throw new Error(`JSON parse: ${error.message}`);
+  }
 }
 
 // ── Data Sources ───────────────────────────────────────────

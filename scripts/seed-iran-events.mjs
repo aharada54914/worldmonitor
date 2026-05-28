@@ -155,6 +155,11 @@ const LOCATION_COORDS = {
   'al-ahmadi':     { lat: 29.0769, lon: 48.0839 },
   'mina al-ahmadi': { lat: 29.0769, lon: 48.0839 },
   'mina abdullah': { lat: 28.9600, lon: 48.1600 },
+  'mahshahr':      { lat: 30.5630, lon: 49.1980 },
+  'bandar khamir': { lat: 26.9592, lon: 55.8981 },
+  'shalamcheh':    { lat: 30.5244, lon: 47.9297 },
+  'ramat gan':     { lat: 32.0704, lon: 34.8237 },
+  'shuwaikh':      { lat: 29.3636, lon: 47.9417 },
 };
 
 const CATEGORY_MAP = {
