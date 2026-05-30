@@ -81,13 +81,6 @@ extract_json_bool() {
     | sed 's/.*:[[:space:]]*//'
 }
 
-is_page_status() {
-  case "$1" in
-    UNHEALTHY|UNREACHABLE) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 # ヘルスエンドポイントを取得
 HTTP_RESPONSE=$(curl -sS --max-time 10 -w '\n__WM_HTTP_CODE__:%{http_code}' "${WM_URL}${HEALTH_PATH}" 2>/dev/null)
 CURL_RC=$?
@@ -125,20 +118,39 @@ LAST_ALERT_EPOCH=0
 if [ -f "$STATE_FILE" ]; then
   IFS='|' read -r PREV_STATUS LAST_ALERT_EPOCH < "$STATE_FILE" || true
 fi
+# Guard against a corrupt/legacy state file: the epoch must be a plain integer
+# of sane width. An 11-digit cap stays well inside 64-bit range (epochs are 10
+# digits today, 11 until the year ~5138), so an out-of-range value can never
+# later break `[ -gt ]` or `$(( ))` and silently strand an open incident.
+case "${LAST_ALERT_EPOCH:-}" in
+  ''|*[!0-9]*) LAST_ALERT_EPOCH=0 ;;
+  *) [ "${#LAST_ALERT_EPOCH}" -gt 11 ] && LAST_ALERT_EPOCH=0 ;;
+esac
 
 NOW_EPOCH=$(date +%s 2>/dev/null || printf '0')
 REPEAT_SECONDS=$((ALERT_REPEAT_MINUTES * 60))
+
+# LAST_ALERT_EPOCH > 0 is the single source of truth for "a paging incident is
+# currently OPEN" (we alerted and have not resolved it yet). Incident state is
+# NEVER inferred from the textual status — that was the root cause of the recovery
+# spam: a non-paging data status such as UNHEALTHY used to masquerade as an open
+# incident, so the script re-sent "✅ 復旧 / ステータス: UNHEALTHY" on every tick.
+INCIDENT_OPEN=0
+[ "$LAST_ALERT_EPOCH" -gt 0 ] && INCIDENT_OPEN=1
+
 SHOULD_ALERT=0
 SHOULD_RESOLVE=0
 
 if [ "$SHOULD_PAGE" -eq 1 ]; then
-  if [ "$PREV_STATUS" != "$STATUS" ]; then
-    SHOULD_ALERT=1
-  elif [ "$ALERT_REPEAT_MINUTES" -gt 0 ] && [ "${NOW_EPOCH:-0}" -ge $(( ${LAST_ALERT_EPOCH:-0} + REPEAT_SECONDS )) ]; then
-    SHOULD_ALERT=1
+  if [ "$INCIDENT_OPEN" -eq 0 ]; then
+    SHOULD_ALERT=1                       # new incident — open it and page once
+  elif [ "$PREV_STATUS" != "$STATUS" ]; then
+    SHOULD_ALERT=1                       # severe status changed — re-page on the transition
+  elif [ "$ALERT_REPEAT_MINUTES" -gt 0 ] && [ "${NOW_EPOCH:-0}" -ge $(( LAST_ALERT_EPOCH + REPEAT_SECONDS )) ]; then
+    SHOULD_ALERT=1                       # opt-in reminder cadence elapsed
   fi
-elif is_page_status "$PREV_STATUS" && [ "${LAST_ALERT_EPOCH:-0}" -gt 0 ]; then
-  SHOULD_RESOLVE=1
+elif [ "$INCIDENT_OPEN" -eq 1 ]; then
+  SHOULD_RESOLVE=1                       # paging cleared while an incident was open — resolve once
 fi
 
 if [ "$SHOULD_PAGE" -eq 1 ]; then
@@ -158,7 +170,7 @@ if [ "$SHOULD_PAGE" -eq 1 ]; then
         -d "{\"content\":\"🚨 **World Monitor** ヘルスアラート\\nステータス: **${STATUS}**\\nHTTP: **${HTTP_CODE:-000}**\\n時刻: ${TIMESTAMP}\"}" \
         --max-time 10 >/dev/null 2>&1
     fi
-    LAST_ALERT_EPOCH="$NOW_EPOCH"
+    LAST_ALERT_EPOCH="$NOW_EPOCH"        # (re)open the incident at this tick
   else
     echo "ALERT SUPPRESSED: status=${STATUS} repeat=${ALERT_REPEAT_MINUTES}m"
   fi
@@ -173,11 +185,22 @@ if [ "$SHOULD_RESOLVE" -eq 1 ]; then
     echo "$RESOLVED_MSG" | mail -s "[WM] Health Recovered: ${STATUS}" "$ALERT_EMAIL"
   fi
   if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+    # The alert that opened this incident was a *paging* (availability) alert, so
+    # recovery announces that the paging condition cleared. When the data layer is
+    # still degraded (a non-paging concern) we surface it as separate, clearly
+    # labelled context instead of printing a contradictory
+    # "✅ 復旧 / ステータス: UNHEALTHY" headline.
+    if [ "$STATUS" = "HEALTHY" ]; then
+      RESOLVE_CONTENT="✅ **World Monitor** 復旧\\nステータス: **HEALTHY**\\nHTTP: **${HTTP_CODE:-000}**\\n時刻: ${TIMESTAMP}"
+    else
+      RESOLVE_CONTENT="✅ **World Monitor** 復旧（ページング状態を解除）\\n到達性: **回復** (HTTP ${HTTP_CODE:-000})\\nデータ状態: **${STATUS}**（データ鮮度の問題・ページ対象外）\\n時刻: ${TIMESTAMP}"
+    fi
     curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
       -H 'Content-Type: application/json' \
-      -d "{\"content\":\"✅ **World Monitor** 復旧\\nステータス: **${STATUS}**\\nHTTP: **${HTTP_CODE:-000}**\\n時刻: ${TIMESTAMP}\"}" \
+      -d "{\"content\":\"${RESOLVE_CONTENT}\"}" \
       --max-time 10 >/dev/null 2>&1
   fi
+  LAST_ALERT_EPOCH=0                     # close the incident so it cannot re-resolve
 fi
 
 printf '%s|%s\n' "$STATUS" "${LAST_ALERT_EPOCH:-0}" > "$STATE_FILE"
