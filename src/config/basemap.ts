@@ -2,6 +2,7 @@ import { Protocol } from 'pmtiles';
 import maplibregl from 'maplibre-gl';
 import { layers, namedFlavor } from '@protomaps/basemaps';
 import type { StyleSpecification } from 'maplibre-gl';
+// boundary-ignore: getInstanceDefaults is a pure in-memory config read with no service dependencies
 import { getInstanceDefaults } from '@/services/instance-defaults';
 
 const R2_PROXY = import.meta.env.VITE_PMTILES_URL ?? '';
