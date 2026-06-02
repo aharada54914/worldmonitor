@@ -29,7 +29,7 @@ RUN node docker/build-handlers.mjs
 RUN npx tsc && npx vite build
 
 # ── Stage 2: Runtime dependencies ───────────────────────────────────────────
-FROM node:24-alpine AS runtime-deps
+FROM node:22-alpine AS runtime-deps
 
 WORKDIR /app
 
@@ -43,7 +43,7 @@ COPY docker/runtime-package-lock.json ./package-lock.json
 RUN npm ci --omit=dev --omit=optional --ignore-scripts
 
 # ── Stage 3: Runtime ─────────────────────────────────────────────────────────
-FROM node:24-alpine AS final
+FROM node:22-alpine AS final
 
 # nginx + supervisord
 RUN apk add --no-cache nginx supervisor gettext && \
@@ -89,8 +89,8 @@ USER appuser
 
 EXPOSE 8080
 
-# Healthcheck checks container readiness, not seed freshness.
+# Healthcheck goes through nginx so the private sidecar token is injected.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -q --spider http://127.0.0.1:8080/ || exit 1
+  CMD wget -qO- http://localhost:8080/api/health >/dev/null || exit 1
 
 CMD ["/app/entrypoint.sh"]

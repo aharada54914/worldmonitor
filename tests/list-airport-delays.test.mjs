@@ -234,7 +234,7 @@ beforeEach(() => {
 // NOTAM-only sets. If MONITORED_AIRPORTS shifts, swap to whatever's still in
 // each bucket — the assertions are structural, not airport-specific.
 const FAA_SAMPLE = 'JFK';            // in FAA_AIRPORTS
-const INTL_SAMPLE = 'LHR';           // in AVIATIONSTACK_AIRPORTS
+const INTL_SAMPLE = 'DXB';           // in AVIATIONSTACK_AIRPORTS
 const NOTAM_ONLY_SAMPLE = 'IKA';     // Tehran Imam Khomeini — not in either AS or FAA
 
 describe('listAirportDelays handler — coverage gating (#3707)', () => {
