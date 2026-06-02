@@ -1,6 +1,6 @@
 import { Panel } from './Panel';
 import { t } from '@/services/i18n';
-import { escapeHtml } from '@/utils/sanitize';
+import { escapeHtml, unsafeRawHtml } from '@/utils/sanitize';
 import { getHydratedData } from '@/services/bootstrap';
 import { getRpcBaseUrl } from '@/services/rpc-client';
 import { EconomicServiceClient } from '@/generated/client/worldmonitor/economic/v1/service_client';
@@ -10,7 +10,7 @@ const client = new EconomicServiceClient(getRpcBaseUrl(), { fetch: (...args: Par
 
 export class BigMacPanel extends Panel {
   constructor() {
-    super({ id: 'bigmac', title: t('panels.bigmac') });
+    super({ id: 'bigmac', title: t('panels.bigmac'), infoTooltip: t('components.bigmac.infoTooltip') });
   }
 
   public async fetchData(): Promise<void> {
@@ -19,6 +19,10 @@ export class BigMacPanel extends Panel {
       if (hydrated?.countries?.length) {
         if (!this.element?.isConnected) return;
         this.renderIndex(hydrated);
+        void client.listBigMacPrices({}).then(data => {
+          if (!this.element?.isConnected || !data.countries?.length) return;
+          this.renderIndex(data);
+        }).catch(() => {});
         return;
       }
       const data = await client.listBigMacPrices({});
@@ -90,10 +94,10 @@ export class BigMacPanel extends Panel {
             <tbody>${rows}</tbody>
           </table>
         </div>
-        ${updatedAt ? `<div class="gb-updated">${t('common.updatedAt')}: ${updatedAt}</div>` : ''}
+        ${updatedAt ? `<div class="gb-updated">${t('components.status.updatedAt', { time: updatedAt })}</div>` : ''}
       </div>
     `;
 
-    this.setContent(html);
+    this.setSafeContent(unsafeRawHtml(html, 'legacy Panel.setContent() migration'));
   }
 }

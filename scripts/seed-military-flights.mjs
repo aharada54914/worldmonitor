@@ -2,8 +2,9 @@
 
 import { loadEnvFile, CHROME_UA, getRedisCredentials, acquireLockSafely, releaseLock, withRetry, writeFreshnessMetadata, logSeedResult, verifySeedKey, extendExistingTtl } from './_seed-utils.mjs';
 import { summarizeMilitaryTheaters, buildMilitarySurges, appendMilitaryHistory } from './_military-surges.mjs';
-import { createRequire } from 'node:module';
+import { unwrapEnvelope } from './_seed-envelope-source.mjs';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 
 loadEnvFile(import.meta.url);
 
@@ -38,7 +39,7 @@ const FORECAST_REFRESH_REQUEST_KEY = 'forecast:refresh-request:v1';
 const FORECAST_REFRESH_REQUEST_TTL = 60 * 60;
 
 // ── Proxy Config ─────────────────────────────────────────
-const OPENSKY_PROXY_AUTH = process.env.OPENSKY_PROXY_AUTH || process.env.OREF_PROXY_AUTH || '';
+const OPENSKY_PROXY_AUTH = process.env.OPENSKY_PROXY_AUTH || process.env.PROXY_URL || '';
 const PROXY_ENABLED = !!OPENSKY_PROXY_AUTH;
 
 // ── Query Regions ──────────────────────────────────────────
@@ -490,30 +491,19 @@ function redactProxy(msg) {
   return String(msg || '').replace(/\/\/[^@]+@/g, '//<redacted>@');
 }
 
-function parseProxyAuth() {
-  const { parseProxyConfig } = createRequire(import.meta.url)('./_proxy-utils.cjs');
-  return parseProxyConfig(OPENSKY_PROXY_AUTH);
-}
-
 async function proxyFetchJson(url, { headers = {}, timeout = 15000, method = 'GET', body = null } = {}) {
-  const { proxyFetch } = createRequire(import.meta.url)('./_proxy-utils.cjs');
-  const proxy = parseProxyAuth();
-  if (!proxy) throw new Error('No proxy config');
-  const result = await proxyFetch(url, proxy, {
+  const { proxyFetch, parseProxyConfig } = createRequire(import.meta.url)('./_proxy-utils.cjs');
+  const proxyConfig = parseProxyConfig(OPENSKY_PROXY_AUTH);
+  if (!proxyConfig) throw new Error('No proxy config');
+  // proxyConfig.tls defaults to true from parseProxyConfig (Decodo requires TLS)
+  const result = await proxyFetch(url, proxyConfig, {
     headers: { 'User-Agent': CHROME_UA, ...headers },
     method,
     body,
-    accept: 'application/json',
     timeoutMs: timeout,
   });
-  if (!result.ok) {
-    throw new Error(`HTTP ${result.status}: ${result.buffer.toString('utf8').slice(0, 200)}`);
-  }
-  try {
-    return JSON.parse(result.buffer.toString('utf8'));
-  } catch (error) {
-    throw new Error(`JSON parse: ${error.message}`);
-  }
+  if (!result.ok) throw Object.assign(new Error(`HTTP ${result.status}`), { status: result.status });
+  return JSON.parse(result.buffer.toString('utf8'));
 }
 
 // ── Data Sources ───────────────────────────────────────────
@@ -1189,7 +1179,7 @@ async function redisGet(url, token, key) {
   if (!resp.ok) return null;
   const data = await resp.json();
   if (!data?.result) return null;
-  try { return JSON.parse(data.result); } catch { return null; }
+  try { return unwrapEnvelope(JSON.parse(data.result)).data; } catch { return null; }
 }
 
 async function requestForecastRefreshIfEnabled(runId, assessedAt, source) {

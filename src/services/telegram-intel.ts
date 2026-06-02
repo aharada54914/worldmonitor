@@ -28,15 +28,16 @@ export const TELEGRAM_TOPICS = [
   { id: 'all', labelKey: 'components.telegramIntel.filterAll' },
   { id: 'breaking', labelKey: 'components.telegramIntel.filterBreaking' },
   { id: 'conflict', labelKey: 'components.telegramIntel.filterConflict' },
-  { id: 'alerts', labelKey: 'components.telegramIntel.filterAlerts' },
-  { id: 'osint', labelKey: 'components.telegramIntel.filterOsint' },
-  { id: 'politics', labelKey: 'components.telegramIntel.filterPolitics' },
+  { id: 'geopolitics', labelKey: 'components.telegramIntel.filterGeopolitics' },
   { id: 'middleeast', labelKey: 'components.telegramIntel.filterMiddleeast' },
+  { id: 'osint', labelKey: 'components.telegramIntel.filterOsint' },
+  { id: 'cyber', labelKey: 'components.telegramIntel.filterCyber' },
 ] as const;
 
 let cachedResponse: TelegramFeedResponse | null = null;
 let cachedAt = 0;
 const CACHE_TTL = 30_000;
+const MISSING_TIMESTAMP_ISO = new Date(0).toISOString();
 
 function telegramFeedUrl(limit: number): string {
   const path = `/api/telegram-feed?limit=${limit}`;
@@ -56,7 +57,10 @@ export async function fetchTelegramFeed(limit = 50): Promise<TelegramFeedRespons
 }
 
 export function formatTelegramTime(ts: string): string {
-  const diff = Date.now() - new Date(ts).getTime();
+  const time = new Date(ts).getTime();
+  if (!Number.isFinite(time) || ts === MISSING_TIMESTAMP_ISO) return 'unknown';
+
+  const diff = Date.now() - time;
   if (diff < 0) return 'now';
   const secs = Math.floor(diff / 1000);
   if (secs < 60) return `${secs}s`;

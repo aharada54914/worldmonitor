@@ -1,6 +1,6 @@
 import { Panel } from './Panel';
 import { getNationalDebtData, type NationalDebtEntry } from '@/services/economic';
-import { escapeHtml } from '@/utils/sanitize';
+import { escapeHtml, unsafeRawHtml } from '@/utils/sanitize';
 
 type SortMode = 'total' | 'gdp-ratio' | 'growth';
 
@@ -112,6 +112,8 @@ export class NationalDebtPanel extends Panel {
   private lastFetch = 0;
   private visibleCount = PAGE_SIZE;
   private tickerInterval: ReturnType<typeof setInterval> | null = null;
+  private tickerElements = new Map<string, HTMLElement>();
+  private lastTickerValues = new Map<string, string>();
   private readonly REFRESH_INTERVAL = 6 * 60 * 60 * 1000;
 
   constructor() {
@@ -184,11 +186,11 @@ export class NationalDebtPanel extends Panel {
   }
 
   private showLoadingState(): void {
-    this.setContent(`
+    this.setSafeContent(unsafeRawHtml(`
       <div style="display:flex;align-items:center;justify-content:center;height:80px;color:var(--text-dim);font-size:13px;">
         Loading debt data from IMF...
       </div>
-    `);
+    `, 'legacy Panel.setContent() migration'));
   }
 
   private applyFilters(): void {
@@ -212,6 +214,18 @@ export class NationalDebtPanel extends Panel {
 
   private getGlobalDebt(): number {
     return this.entries.reduce((sum, e) => sum + getCurrentDebt(e), 0);
+  }
+
+  private getSourceLabel(): string {
+    // Prefer the richest source label present in the seeded entries (USA entry
+    // carries the combined "IMF WEO <year> + US Treasury FiscalData" string).
+    let best = '';
+    for (const e of this.entries) {
+      const s = e.source?.trim();
+      if (!s) continue;
+      if (s.length > best.length) best = s;
+    }
+    return best || 'IMF WEO';
   }
 
   private render(): void {
@@ -253,13 +267,13 @@ export class NationalDebtPanel extends Panel {
           <span class="debt-load-more-count">(${this.filteredEntries.length - this.visibleCount} remaining)</span>
         </button>` : ''}
         <div class="debt-footer">
-          <span class="debt-source">Source: IMF WEO 2024 + US Treasury FiscalData</span>
+          <span class="debt-source">Source: ${escapeHtml(this.getSourceLabel())}</span>
           <span class="debt-updated">Updated: ${new Date(this.lastFetch).toLocaleDateString()}</span>
         </div>
       </div>
     `;
 
-    this.setContent(html);
+    this.setSafeContent(unsafeRawHtml(html, 'legacy Panel.setContent() migration'));
   }
 
   private renderRow(entry: NationalDebtEntry, rank: number): string {
@@ -295,17 +309,35 @@ export class NationalDebtPanel extends Panel {
     this.stopTicker();
     if (this.filteredEntries.length === 0) return;
 
-    this.tickerInterval = setInterval(() => {
-      const globalEl = this.content.querySelector<HTMLElement>('.debt-global-ticker');
-      if (globalEl) {
-        globalEl.textContent = formatDebt(this.getGlobalDebt());
-      }
-      const container = this.content.querySelector('.debt-list');
-      if (!container) return;
+    // Pre-cache element references to avoid per-tick DOM queries
+    this.tickerElements.clear();
+    this.lastTickerValues.clear();
+    const globalEl = this.content.querySelector<HTMLElement>('.debt-global-ticker');
+    if (globalEl) this.tickerElements.set('__global__', globalEl);
+    const container = this.content.querySelector('.debt-list');
+    if (container) {
       for (const entry of this.filteredEntries.slice(0, this.visibleCount)) {
         const el = container.querySelector<HTMLElement>(`.debt-ticker[data-iso3="${entry.iso3}"]`);
-        if (el) {
-          el.textContent = formatDebt(getCurrentDebt(entry));
+        if (el) this.tickerElements.set(entry.iso3, el);
+      }
+    }
+
+    this.tickerInterval = setInterval(() => {
+      const gEl = this.tickerElements.get('__global__');
+      if (gEl) {
+        const v = formatDebt(this.getGlobalDebt());
+        if (this.lastTickerValues.get('__global__') !== v) {
+          gEl.textContent = v;
+          this.lastTickerValues.set('__global__', v);
+        }
+      }
+      for (const entry of this.filteredEntries.slice(0, this.visibleCount)) {
+        const el = this.tickerElements.get(entry.iso3);
+        if (!el) continue;
+        const v = formatDebt(getCurrentDebt(entry));
+        if (this.lastTickerValues.get(entry.iso3) !== v) {
+          el.textContent = v;
+          this.lastTickerValues.set(entry.iso3, v);
         }
       }
     }, 1000);
@@ -316,6 +348,8 @@ export class NationalDebtPanel extends Panel {
       clearInterval(this.tickerInterval);
       this.tickerInterval = null;
     }
+    this.tickerElements.clear();
+    this.lastTickerValues.clear();
   }
 
   private restartTicker(): void {

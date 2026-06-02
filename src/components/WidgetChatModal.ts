@@ -1,15 +1,20 @@
 import type { CustomWidgetSpec } from '@/services/widget-store';
-import { getWidgetAgentKey, getProWidgetKey } from '@/services/widget-store';
+import { getBrowserTesterKey, getWidgetAgentKey, getProWidgetKey } from '@/services/widget-store';
+import { getClerkToken } from '@/services/clerk';
 import { t } from '@/services/i18n';
 import { escapeHtml } from '@/utils/sanitize';
 import { widgetAgentHealthUrl, widgetAgentUrl } from '@/utils/proxy';
 import { wrapWidgetHtml, wrapProWidgetHtml } from '@/utils/widget-sanitizer';
 import { track } from '@/services/analytics';
+import { setTrustedHtml, trustedHtml } from '@/utils/dom-utils';
+
 
 interface WidgetChatOptions {
   mode: 'create' | 'modify';
   tier?: 'basic' | 'pro';
   existingSpec?: CustomWidgetSpec;
+  /** Pre-fill the chat input with this text. Used when opening from the analyst action chip. */
+  initialMessage?: string;
   onComplete: (spec: CustomWidgetSpec) => void;
 }
 
@@ -41,6 +46,31 @@ let overlay: HTMLElement | null = null;
 let abortController: AbortController | null = null;
 let clientTimeout: ReturnType<typeof setTimeout> | null = null;
 
+interface BuiltAuthHeaders {
+  headers: Record<string, string>;
+  /** True when the request is authenticated with a tester key (wm-widget-key /
+   *  wm-pro-key / wm-worldmonitor-key) rather than a Clerk JWT. Used to pick
+   *  the right 403 error message — the "Update wm-pro-key" hint is misleading
+   *  for normal paying users who have no tester key. */
+  usedTesterKey: boolean;
+}
+
+async function buildWidgetAuthHeaders(isPro: boolean): Promise<BuiltAuthHeaders> {
+  const testerKey = getBrowserTesterKey();
+  const widgetKey = getWidgetAgentKey();
+  const proKey = getProWidgetKey();
+  if (testerKey || widgetKey || proKey) {
+    const headers: Record<string, string> = {};
+    if (testerKey) headers['X-WorldMonitor-Key'] = testerKey;
+    if (widgetKey) headers['X-Widget-Key'] = widgetKey;
+    if (isPro && proKey) headers['X-Pro-Key'] = proKey;
+    return { headers, usedTesterKey: true };
+  }
+  const token = await getClerkToken();
+  if (token) return { headers: { 'Authorization': `Bearer ${token}` }, usedTesterKey: false };
+  return { headers: {}, usedTesterKey: false };
+}
+
 export function openWidgetChatModal(options: WidgetChatOptions): void {
   closeWidgetChatModal();
   track('widget-ai-open', { panelId: options.existingSpec?.id });
@@ -58,7 +88,7 @@ export function openWidgetChatModal(options: WidgetChatOptions): void {
   const titleText = isModify ? t('widgets.modifyTitle') : t('widgets.chatTitle');
   const proBadgeHtml = isPro ? `<span class="widget-pro-badge">${escapeHtml(t('widgets.proBadge'))}</span>` : '';
 
-  modal.innerHTML = `
+  setTrustedHtml(modal, trustedHtml(`
     <div class="modal-header">
       <span class="modal-title">${escapeHtml(titleText)}${proBadgeHtml}</span>
       <button class="modal-close" aria-label="${escapeHtml(t('common.close'))}">\u2715</button>
@@ -84,7 +114,7 @@ export function openWidgetChatModal(options: WidgetChatOptions): void {
       <div class="widget-chat-footer-status"></div>
       <button class="widget-chat-action-btn" disabled>${isModify ? t('widgets.applyChanges') : t('widgets.addToDashboard')}</button>
     </div>
-  `;
+  `, "legacy direct innerHTML migration"));
 
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
@@ -104,6 +134,8 @@ export function openWidgetChatModal(options: WidgetChatOptions): void {
   let requestInFlight = false;
   let preflightReady = false;
   let pendingSaveSpec: CustomWidgetSpec | null = null;
+
+  if (options.initialMessage) inputEl.value = options.initialMessage;
 
   if (isModify && options.existingSpec) {
     for (const msg of sessionHistory) {
@@ -138,14 +170,13 @@ export function openWidgetChatModal(options: WidgetChatOptions): void {
   async function runPreflight(): Promise<void> {
     setReadinessState(readinessEl, 'checking', t('widgets.checkingConnection'));
     try {
-      const headers: Record<string, string> = { 'X-Widget-Key': getWidgetAgentKey() };
-      if (isPro) headers['X-Pro-Key'] = getProWidgetKey();
-      const res = await fetch(widgetAgentHealthUrl(), { headers });
+      const auth = await buildWidgetAuthHeaders(isPro);
+      const res = await fetch(widgetAgentHealthUrl(), { headers: auth.headers });
       let payload: WidgetAgentHealth | null = null;
       try { payload = await res.json() as WidgetAgentHealth; } catch { /* ignore */ }
 
       if (!res.ok) {
-        const message = resolvePreflightMessage(res.status, payload, isPro);
+        const message = resolvePreflightMessage(res.status, payload, isPro, auth.usedTesterKey);
         preflightReady = false;
         setReadinessState(readinessEl, 'error', message);
         setFooterStatus(footerStatusEl, message, 'error');
@@ -220,11 +251,11 @@ export function openWidgetChatModal(options: WidgetChatOptions): void {
     }, timeoutMs);
 
     try {
+      const auth = await buildWidgetAuthHeaders(isPro);
       const reqHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
-        'X-Widget-Key': getWidgetAgentKey(),
+        ...auth.headers,
       };
-      if (isPro) reqHeaders['X-Pro-Key'] = getProWidgetKey();
 
       const res = await fetch(widgetAgentUrl(), {
         method: 'POST',
@@ -243,7 +274,7 @@ export function openWidgetChatModal(options: WidgetChatOptions): void {
       const statusEl = appendMessage(messagesEl, 'assistant', '');
       const radarEl = document.createElement('span');
       radarEl.className = 'widget-chat-radar';
-      radarEl.innerHTML = '<span class="panel-loading-radar"><span class="panel-radar-sweep"></span><span class="panel-radar-dot"></span></span>';
+      setTrustedHtml(radarEl, trustedHtml('<span class="panel-loading-radar"><span class="panel-radar-sweep"></span><span class="panel-radar-dot"></span></span>', "legacy direct innerHTML migration"));
       statusEl.appendChild(radarEl);
 
       const reader = res.body.getReader();
@@ -352,7 +383,7 @@ export function closeWidgetChatModal(): void {
 }
 
 function renderExampleChips(container: HTMLElement, inputEl: HTMLTextAreaElement, isPro: boolean): void {
-  container.innerHTML = '';
+  setTrustedHtml(container, trustedHtml('', "legacy direct innerHTML migration"));
   const keys = isPro ? PRO_EXAMPLE_PROMPT_KEYS : EXAMPLE_PROMPT_KEYS;
   for (const key of keys) {
     const btn = document.createElement('button');
@@ -367,8 +398,25 @@ function renderExampleChips(container: HTMLElement, inputEl: HTMLTextAreaElement
   }
 }
 
-function resolvePreflightMessage(status: number, payload: WidgetAgentHealth | null, isPro: boolean): string {
-  if (status === 403) return isPro ? t('widgets.preflightInvalidProKey') : t('widgets.preflightInvalidKey');
+function resolvePreflightMessage(
+  status: number,
+  payload: WidgetAgentHealth | null,
+  isPro: boolean,
+  usedTesterKey: boolean,
+): string {
+  if (status === 403) {
+    // Tester-key path: tell the operator to update the wm-*-key they actually have.
+    if (usedTesterKey) return isPro ? t('widgets.preflightInvalidProKey') : t('widgets.preflightInvalidKey');
+    // Clerk-auth path: split on isPro.
+    //   isPro=true  — the modal believes the user is Pro; a 403 means either
+    //                 (a) they just upgraded (entitlement still propagating)
+    //                 or (b) the entitlement service is degraded. Tell them to
+    //                 refresh / contact support.
+    //   isPro=false — a free user reached a Pro action; "contact support" is
+    //                 wrong, they need to upgrade. Surface a clean upgrade ask
+    //                 without the "just upgraded" language.
+    return isPro ? t('widgets.preflightProSubscriptionRequired') : t('widgets.preflightProRequired');
+  }
   if (status === 503 && payload?.proKeyConfigured === false) return t('widgets.preflightProUnavailable');
   if (payload?.anthropicConfigured === false) return t('widgets.preflightAiUnavailable');
   return t('widgets.preflightUnavailable');
@@ -389,7 +437,7 @@ function renderPreviewState(container: HTMLElement, phase: PreviewPhase, detail 
   const copy = detail || getPreviewCopy(phase);
   const isError = phase === 'error';
 
-  container.innerHTML = `
+  setTrustedHtml(container, trustedHtml(`
     <div class="widget-chat-preview-state is-${phase}">
       <div class="widget-chat-preview-head">
         <div>
@@ -414,7 +462,7 @@ function renderPreviewState(container: HTMLElement, phase: PreviewPhase, detail 
         </div>
       `}
     </div>
-  `;
+  `, "legacy direct innerHTML migration"));
 }
 
 function renderPreviewHtml(
@@ -429,7 +477,7 @@ function renderPreviewHtml(
     ? wrapProWidgetHtml(html)
     : wrapWidgetHtml(html, 'wm-widget-shell-preview');
 
-  container.innerHTML = `
+  setTrustedHtml(container, trustedHtml(`
     <div class="widget-chat-preview-frame">
       <div class="widget-chat-preview-head">
         <div>
@@ -443,7 +491,7 @@ function renderPreviewHtml(
         ${rendered}
       </div>
     </div>
-  `;
+  `, "legacy direct innerHTML migration"));
 }
 
 function getPhaseLabel(phase: PreviewPhase): string {

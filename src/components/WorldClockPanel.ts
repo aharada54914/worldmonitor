@@ -1,5 +1,6 @@
 import { Panel } from './Panel';
-import { getLocale } from '@/services/i18n';
+import { t, getLocale } from '@/services/i18n';
+import { unsafeRawHtml } from '@/utils/sanitize';
 
 interface CityEntry {
   id: string;
@@ -143,7 +144,7 @@ export class WorldClockPanel extends Panel {
   private dragStartY = 0;
 
   constructor() {
-    super({ id: 'world-clock', title: 'World Clock', trackActivity: false });
+    super({ id: 'world-clock', title: 'World Clock', trackActivity: false, infoTooltip: t('components.worldClock.infoTooltip') });
     this.homeCityId = detectHomeCity();
     this.selectedCities = loadSelectedCities();
 
@@ -205,7 +206,7 @@ export class WorldClockPanel extends Panel {
       html += '</div>';
     }
     html += '</div>';
-    this.setContent(html);
+    this.setSafeContent(unsafeRawHtml(html, 'legacy Panel.setContent() migration'));
   }
 
   private setupDragHandlers(): void {
@@ -217,10 +218,12 @@ export class WorldClockPanel extends Panel {
       const row = handle.closest('.wc-row') as HTMLElement | null;
       if (!row) return;
       e.preventDefault();
+      e.stopPropagation();
       this.dragCityId = row.dataset.cityId ?? null;
       this.dragStartY = e.clientY;
       this.dragging = false;
       row.classList.add('wc-dragging');
+      content.classList.add('wc-content-dragging');
     });
 
     document.addEventListener('mousemove', (e: MouseEvent) => {
@@ -245,6 +248,7 @@ export class WorldClockPanel extends Panel {
       this.dragCityId = null;
       const rows = content.querySelectorAll('.wc-row[data-city-id]');
       rows.forEach(r => r.classList.remove('wc-dragging', 'wc-drag-over-above', 'wc-drag-over-below'));
+      content.classList.remove('wc-content-dragging');
 
       if (this.dragging) {
         let targetId: string | null = null;
@@ -281,7 +285,7 @@ export class WorldClockPanel extends Panel {
       .filter((c): c is CityEntry => !!c);
 
     if (sorted.length === 0) {
-      this.setContent('<div class="wc-empty">No cities selected. Click \u2699 to add cities.</div>');
+      this.setSafeContent(unsafeRawHtml('<div class="wc-empty">No cities selected. Click \u2699 to add cities.</div>', 'legacy Panel.setContent() migration'));
       return;
     }
 
@@ -309,7 +313,7 @@ export class WorldClockPanel extends Panel {
       html += `<div class="${rowCls.join(' ')}" data-city-id="${city.id}"><div class="wc-drag-handle" title="Drag to reorder">\u22EE</div><div class="wc-info"><div class="wc-name">${city.city}${isHome ? '<span class="wc-home-tag">\u2302</span>' : ''}</div><div class="wc-detail"><span class="wc-exchange">${city.label}</span>${statusHtml}</div></div><div class="wc-clock"><div class="wc-time">${pad2(h)}:${pad2(m)}:${pad2(s)}</div><div class="wc-tz"><div class="wc-bar-wrap"><div class="wc-bar ${isDay ? 'day' : 'night'}" style="width:${pct.toFixed(1)}%"></div></div><span>${dayOfWeek} ${abbr}</span></div></div></div>`;
     }
     html += '</div>';
-    this.setContent(html);
+    this.setSafeContent(unsafeRawHtml(html, 'legacy Panel.setContent() migration'));
   }
 
   destroy(): void {

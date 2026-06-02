@@ -1,5 +1,7 @@
 import { t } from '@/services/i18n';
 import { getDismissed, setDismissed } from '@/utils/cross-domain-storage';
+import { setTrustedHtml, trustedHtml } from '@/utils/dom-utils';
+
 
 const DISMISSED_KEY = 'wm-community-dismissed-v2';
 const DISCUSSION_URL = 'https://discord.gg/re63kWKxaz';
@@ -10,27 +12,20 @@ export function mountCommunityWidget(): void {
 
   const widget = document.createElement('div');
   widget.className = 'community-widget';
-  widget.innerHTML = `
+  setTrustedHtml(widget, trustedHtml(`
     <div class="cw-pill">
-      <div class="cw-dot"></div>
-      <span class="cw-text">${t('components.community.joinDiscussion')}</span>
-      <a class="cw-cta" href="${DISCUSSION_URL}" target="_blank" rel="noopener">${t('components.community.openDiscussion')}</a>
+      <a class="cw-cta" href="${DISCUSSION_URL}" target="_blank" rel="noopener">Join the Discord Community</a>
       <button class="cw-close" aria-label="${t('common.close')}">&times;</button>
     </div>
-    <button class="cw-dismiss">${t('components.community.dontShowAgain')}</button>
-  `;
+  `, "legacy direct innerHTML migration"));
 
   const dismiss = () => {
+    setDismissed(DISMISSED_KEY);
     widget.classList.add('cw-hiding');
     setTimeout(() => widget.remove(), 300);
   };
 
   widget.querySelector('.cw-close')!.addEventListener('click', dismiss);
-
-  widget.querySelector('.cw-dismiss')!.addEventListener('click', () => {
-    setDismissed(DISMISSED_KEY);
-    dismiss();
-  });
 
   document.body.appendChild(widget);
 }

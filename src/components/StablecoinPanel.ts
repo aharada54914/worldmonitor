@@ -1,7 +1,7 @@
 import { Panel } from './Panel';
 import { getRpcBaseUrl } from '@/services/rpc-client';
 import { t } from '@/services/i18n';
-import { escapeHtml } from '@/utils/sanitize';
+import { joinSafeHtml, safeHtml } from '@/utils/sanitize';
 import { MarketServiceClient } from '@/generated/client/worldmonitor/market/v1/service_client';
 import type { ListStablecoinMarketsResponse } from '@/generated/client/worldmonitor/market/v1/service_client';
 import { getHydratedData } from '@/services/bootstrap';
@@ -32,7 +32,7 @@ export class StablecoinPanel extends Panel {
   private loading = true;
   private error: string | null = null;
   constructor() {
-    super({ id: 'stablecoins', title: t('panels.stablecoins'), showCount: false });
+    super({ id: 'stablecoins', title: t('panels.stablecoins'), showCount: false, infoTooltip: t('components.stablecoins.infoTooltip') });
   }
 
   public async fetchData(): Promise<void> {
@@ -42,22 +42,33 @@ export class StablecoinPanel extends Panel {
       this.error = null;
       this.loading = false;
       this.renderPanel();
+      void this.refreshFromRpc();
       return;
     }
+    await this.refreshFromRpc();
+  }
 
+  private async refreshFromRpc(): Promise<void> {
     try {
       const client = new MarketServiceClient(getRpcBaseUrl(), { fetch: (...args) => globalThis.fetch(...args) });
-      this.data = await client.listStablecoinMarkets({ coins: [] });
+      const fresh = await client.listStablecoinMarkets({ coins: [] });
       if (!this.element?.isConnected) return;
-      this.error = null;
+      if (fresh.stablecoins?.length || !this.data) {
+        this.data = fresh;
+        this.error = null;
+        this.loading = false;
+        this.renderPanel();
+      }
     } catch (err) {
       if (this.isAbortError(err)) return;
       if (!this.element?.isConnected) return;
-      console.warn('[Stablecoin] Fetch error:', err);
-      this.error = t('common.noDataShort');
+      if (!this.data) {
+        console.warn('[Stablecoin] Fetch error:', err);
+        this.error = t('common.noDataShort');
+        this.loading = false;
+        this.renderPanel();
+      }
     }
-    this.loading = false;
-    this.renderPanel();
   }
 
   private renderPanel(): void {
@@ -73,39 +84,39 @@ export class StablecoinPanel extends Panel {
 
     const d = this.data;
     if (!d.stablecoins?.length) {
-      this.setContent(`<div class="panel-empty">${t('common.noDataShort')}</div>`);
+      this.setSafeContent(safeHtml`<div class="panel-empty">${t('common.noDataShort')}</div>`);
       return;
     }
 
     const s = d.summary || { totalMarketCap: 0, totalVolume24h: 0, coinCount: 0, depeggedCount: 0, healthStatus: 'UNAVAILABLE' };
 
-    const pegRows = d.stablecoins.map(c => `
+    const pegRows = joinSafeHtml(d.stablecoins.map(c => safeHtml`
       <div class="stable-row">
         <div class="stable-info">
-          <span class="stable-symbol">${escapeHtml(c.symbol)}</span>
-          <span class="stable-name">${escapeHtml(c.name)}</span>
+          <span class="stable-symbol">${c.symbol}</span>
+          <span class="stable-name">${c.name}</span>
         </div>
         <div class="stable-price">$${c.price.toFixed(4)}</div>
         <div class="stable-peg ${pegClass(c.pegStatus)}">
-          <span class="peg-badge">${escapeHtml(c.pegStatus)}</span>
+          <span class="peg-badge">${c.pegStatus}</span>
           <span class="peg-dev">${c.deviation.toFixed(2)}%</span>
         </div>
       </div>
-    `).join('');
+    `));
 
-    const supplyRows = d.stablecoins.map(c => `
+    const supplyRows = joinSafeHtml(d.stablecoins.map(c => safeHtml`
       <div class="stable-supply-row">
-        <span class="stable-symbol">${escapeHtml(c.symbol)}</span>
+        <span class="stable-symbol">${c.symbol}</span>
         <span class="stable-mcap">${formatLargeNum(c.marketCap)}</span>
         <span class="stable-vol">${formatLargeNum(c.volume24h)}</span>
         <span class="stable-change ${c.change24h >= 0 ? 'change-positive' : 'change-negative'}">${c.change24h >= 0 ? '+' : ''}${c.change24h.toFixed(2)}%</span>
       </div>
-    `).join('');
+    `));
 
-    const html = `
+    this.setSafeContent(safeHtml`
       <div class="stablecoin-container">
         <div class="stable-health ${healthClass(s.healthStatus)}">
-          <span class="health-label">${escapeHtml(s.healthStatus)}</span>
+          <span class="health-label">${s.healthStatus}</span>
           <span class="health-detail">MCap: ${formatLargeNum(s.totalMarketCap)} | Vol: ${formatLargeNum(s.totalVolume24h)}</span>
         </div>
         <div class="stable-section">
@@ -120,8 +131,6 @@ export class StablecoinPanel extends Panel {
           <div class="stable-supply-list">${supplyRows}</div>
         </div>
       </div>
-    `;
-
-    this.setContent(html);
+    `);
   }
 }
