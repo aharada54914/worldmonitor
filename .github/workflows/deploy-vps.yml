@@ -92,4 +92,14 @@ jobs:
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
-            "cd '$VPS_DEPLOY_PATH' && npm ci && npm run build && $VPS_SERVICE_COMMAND"
+            "VPS_DEPLOY_PATH='$VPS_DEPLOY_PATH' VPS_SERVICE_COMMAND='$VPS_SERVICE_COMMAND' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$VPS_DEPLOY_PATH"
+          if [ -f docker/worldmonitor.service ]; then
+            sed "s#__REPO_DIR__#${VPS_DEPLOY_PATH}#g" docker/worldmonitor.service > /etc/systemd/system/worldmonitor.service
+            systemctl daemon-reload
+          fi
+          npm ci
+          npm run build
+          eval "$VPS_SERVICE_COMMAND"
+          REMOTE

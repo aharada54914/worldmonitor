@@ -12,7 +12,8 @@ WorkingDirectory=__REPO_DIR__
 ExecStart=/usr/bin/docker compose up -d --remove-orphans
 ExecReload=/usr/bin/docker compose up -d --build --remove-orphans
 ExecStop=/usr/bin/docker compose down
-TimeoutStartSec=180
+TimeoutStartSec=900
+TimeoutReloadSec=900
 TimeoutStopSec=120
 
 [Install]

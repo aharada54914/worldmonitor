@@ -57,7 +57,10 @@ WORKDIR /app
 COPY --from=builder /app/src-tauri/sidecar/local-api-server.mjs ./local-api-server.mjs
 COPY --from=builder /app/src-tauri/sidecar/package.json ./package.json
 COPY --from=builder /app/scripts/discord-notify.mjs ./scripts/discord-notify.mjs
+COPY --from=builder /app/scripts/_seed-contract.mjs ./scripts/_seed-contract.mjs
+COPY --from=builder /app/scripts/_seed-envelope-source.mjs ./scripts/_seed-envelope-source.mjs
 COPY --from=builder /app/scripts/_seed-utils.mjs ./scripts/_seed-utils.mjs
+COPY --from=builder /app/scripts/_proxy-utils.cjs ./scripts/_proxy-utils.cjs
 
 # Minimal runtime node_modules — required by raw .js handlers that aren't
 # bundled by build-handlers.mjs. Without this the Node sidecar dispatches
@@ -91,6 +94,6 @@ EXPOSE 8080
 
 # Healthcheck goes through nginx so the private sidecar token is injected.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:8080/api/health >/dev/null || exit 1
+  CMD wget -qO- http://127.0.0.1:8080/api/health >/dev/null || exit 1
 
 CMD ["/app/entrypoint.sh"]
