@@ -365,6 +365,7 @@ Runs before every `git push`:
 | `contributor-trust.yml` | PR | Gates untrusted first-time-contributor runs |
 | `deploy-gate.yml` | After Test/Typecheck complete | Aggregates required smoke-gate statuses onto the head SHA for branch protection |
 | `convex-deploy.yml` | Push to main, manual | Deploys Convex backend functions |
+| `deploy-vps.yml` | Push to main, manual | Runs check/test/build, rsyncs the repository to the VPS, then rebuilds and restarts the systemd-managed Docker stack |
 | `deploy-worker.yml` | Push to main (worker paths), manual | Deploys the `api-cors-preflight` Cloudflare Worker |
 | `build-desktop.yml` | Release tag, push, manual | Multi-platform Tauri build, code signing (macOS), AppImage library stripping (Linux), smoke test |
 | `docker-publish.yml` | Release, manual | Multi-arch image (amd64, arm64) pushed to GHCR |
