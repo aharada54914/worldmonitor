@@ -884,6 +884,7 @@ async function redisGetJson(key) {
   const response = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(2_500),
+    [ALLOW_PRIVATE_NETWORK_FETCH]: true,
   });
   if (!response.ok) return null;
   const payload = await response.json();

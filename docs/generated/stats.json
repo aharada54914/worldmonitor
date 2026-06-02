@@ -20,6 +20,7 @@
     "contributor-trust.yml",
     "convex-deploy.yml",
     "deploy-gate.yml",
+    "deploy-vps.yml",
     "deploy-worker.yml",
     "docker-publish.yml",
     "feed-validation.yml",
@@ -31,7 +32,7 @@
     "test.yml",
     "typecheck.yml"
   ],
-  "workflowCount": 14,
+  "workflowCount": 15,
   "freshnessSources": 35,
   "freshnessRequiredForRisk": 2,
   "feedDefinitions": 563
