@@ -1,5 +1,12 @@
 import { loadFromStorage, saveToStorage } from '@/utils';
 import { sanitizeWidgetHtml } from '@/utils/widget-sanitizer';
+import { getAuthState } from '@/services/auth-state';
+import { isEntitled } from '@/services/entitlements';
+import {
+  clearLegacyKeyStorage,
+  migrateLegacyKeysToHttpOnlySession,
+  readLegacySessionKey,
+} from '@/services/browser-key-session';
 
 const STORAGE_KEY = 'wm-custom-widgets';
 const PANEL_SPANS_KEY = 'worldmonitor-panel-spans';
@@ -95,40 +102,94 @@ export function getWidget(id: string): CustomWidgetSpec | null {
   return loadWidgets().find(w => w.id === id) ?? null;
 }
 
-export function isWidgetFeatureEnabled(): boolean {
-  try {
-    return !!localStorage.getItem('wm-widget-key');
-  } catch {
-    return false;
+// ── Browser tester key helpers ─────────────────────────────────────────────
+// Legacy wm-widget-key / wm-pro-key values used to live in localStorage and
+// JS-readable cookies. New writes go to /api/wm-session, which sets short-lived
+// HttpOnly cookies. We keep only a tab-local hint so current-page flows can
+// update immediately without re-exposing the raw key after reload.
+
+let widgetSessionHint = false;
+let proSessionHint = false;
+let migrationStarted = false;
+
+function migrateLegacyKeyStorage(): void {
+  if (migrationStarted || typeof window === 'undefined') return;
+  migrationStarted = true;
+  const widgetKey = readLegacySessionKey('wm-widget-key');
+  const proKey = readLegacySessionKey('wm-pro-key');
+  if (!widgetKey && !proKey) return;
+  widgetSessionHint = !!widgetKey;
+  proSessionHint = !!proKey;
+  void migrateLegacyKeysToHttpOnlySession({ widgetKey, proKey })
+    .catch(() => { /* retry on next boot; keep legacy storage until success */ });
+}
+
+export function setWidgetKey(key: string): void {
+  const trimmed = key.trim();
+  widgetSessionHint = !!trimmed;
+  if (!trimmed) {
+    clearLegacyKeyStorage('wm-widget-key');
+    return;
   }
+  void migrateLegacyKeysToHttpOnlySession({ widgetKey: trimmed })
+    .catch(() => { /* caller can retry; no new JS-readable write */ });
+}
+
+export function setProKey(key: string): void {
+  const trimmed = key.trim();
+  proSessionHint = !!trimmed;
+  if (!trimmed) {
+    clearLegacyKeyStorage('wm-pro-key');
+    return;
+  }
+  void migrateLegacyKeysToHttpOnlySession({ proKey: trimmed })
+    .catch(() => { /* caller can retry; no new JS-readable write */ });
+}
+
+export function isWidgetFeatureEnabled(): boolean {
+  migrateLegacyKeyStorage();
+  return widgetSessionHint;
 }
 
 export function getWidgetAgentKey(): string {
-  try {
-    return localStorage.getItem('wm-widget-key') ?? '';
-  } catch {
-    return '';
+  migrateLegacyKeyStorage();
+  return '';
+}
+
+export function getBrowserTesterKeys(): string[] {
+  const keys = [getProWidgetKey(), getWidgetAgentKey()];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of keys) {
+    const key = raw.trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(key);
   }
+  return result;
+}
+
+export function getBrowserTesterKey(): string {
+  return getBrowserTesterKeys()[0] ?? '';
 }
 
 export function isProWidgetEnabled(): boolean {
-  try {
-    return !!localStorage.getItem('wm-pro-key');
-  } catch {
-    return false;
-  }
+  migrateLegacyKeyStorage();
+  return proSessionHint;
 }
 
 export function isProUser(): boolean {
-  return isWidgetFeatureEnabled() || isProWidgetEnabled();
+  return (
+    isWidgetFeatureEnabled() ||
+    isProWidgetEnabled() ||
+    getAuthState().user?.role === 'pro' ||
+    isEntitled()
+  );
 }
 
 export function getProWidgetKey(): string {
-  try {
-    return localStorage.getItem('wm-pro-key') ?? '';
-  } catch {
-    return '';
-  }
+  migrateLegacyKeyStorage();
+  return '';
 }
 
 function cleanSpanEntry(storageKey: string, panelId: string): void {

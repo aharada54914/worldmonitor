@@ -1,5 +1,5 @@
 import { Panel } from './Panel';
-import { escapeHtml } from '@/utils/sanitize';
+import { escapeHtml, unsafeRawHtml } from '@/utils/sanitize';
 import { t } from '@/services/i18n';
 import type { SecurityAdvisory } from '@/services/security-advisories';
 
@@ -113,7 +113,7 @@ export class SecurityAdvisoriesPanel extends Panel {
 
   private render(): void {
     if (this.advisories.length === 0) {
-      this.setContent(`<div class="panel-empty">${t('common.noDataAvailable')}</div>`);
+      this.setSafeContent(unsafeRawHtml(`<div class="panel-empty">${t('common.noDataAvailable')}</div>`, 'legacy Panel.setContent() migration'));
       return;
     }
 
@@ -168,8 +168,10 @@ export class SecurityAdvisoriesPanel extends Panel {
             <span class="sa-badge ${levelCls}">${levelLabel}</span>
             <span class="sa-source">${flag} ${escapeHtml(a.source)}</span>
           </div>
-          <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener" class="sa-title">${escapeHtml(a.title)}</a>
-          <div class="sa-time">${this.formatTime(a.pubDate)}</div>
+          <div class="sa-body">
+            <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener" class="sa-title">${escapeHtml(a.title)}</a>
+            <span class="sa-time">${this.formatTime(a.pubDate)}</span>
+          </div>
         </div>`;
       }).join('');
     }
@@ -181,14 +183,14 @@ export class SecurityAdvisoriesPanel extends Panel {
       </div>
     `;
 
-    this.setContent(`
+    this.setSafeContent(unsafeRawHtml(`
       <div class="sa-panel-content">
         ${summaryHtml}
         ${filtersHtml}
         <div class="sa-list">${itemsHtml}</div>
         ${footerHtml}
       </div>
-    `);
+    `, 'legacy Panel.setContent() migration'));
   }
 
   public setRefreshHandler(handler: () => void): void {

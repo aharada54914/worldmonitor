@@ -44,7 +44,7 @@ async function fetchSectorData() {
   const sectors = SECTORS.map(sector => {
     const changes = sector.tokens
       .map(id => byId.get(id))
-      .filter(v => typeof v === 'number' && isFinite(v));
+      .filter(v => typeof v === 'number' && Number.isFinite(v));
     const change = changes.length > 0 ? changes.reduce((a, b) => a + b, 0) / changes.length : 0;
     return { id: sector.id, name: sector.name, change };
   });
@@ -56,10 +56,18 @@ function validate(data) {
   return Array.isArray(data?.sectors) && data.sectors.length > 0;
 }
 
+export function declareRecords(data) {
+  return Array.isArray(data?.sectors) ? data.sectors.length : 0;
+}
+
 runSeed('market', 'crypto-sectors', CANONICAL_KEY, fetchSectorData, {
   validateFn: validate,
   ttlSeconds: CACHE_TTL,
   sourceVersion: 'coingecko-sectors',
+
+  declareRecords,
+  schemaVersion: 1,
+  maxStaleMin: 120,
 }).catch(err => {
   const _cause = err.cause ? ` (cause: ${err.cause.message || err.cause.code || err.cause})` : '';
   console.error('FATAL:', (err.message || err) + _cause);

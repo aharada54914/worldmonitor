@@ -57,7 +57,7 @@ npm run typecheck:api    # Typecheck API layer separately
 npm run test:data        # Run unit/integration tests
 npm run test:sidecar     # Run sidecar + API handler tests
 npm run test:e2e         # Run all Playwright E2E tests
-make generate            # Regenerate proto stubs (requires buf + sebuf plugins)
+make generate            # Regenerate proto stubs + per-service & unified OpenAPI specs (requires buf + sebuf v0.11.0 plugins)
 ```
 
 ## Architecture Rules
@@ -163,13 +163,14 @@ Variant is set via `VITE_VARIANT` env var. Config lives in `src/config/variants/
 
 Runs automatically before `git push`:
 
-1. TypeScript check (src + API)
-2. CJS syntax validation
-3. Edge function esbuild bundle check
-4. Edge function import guardrail test
-5. Markdown lint
-6. MDX lint (Mintlify compatibility)
-7. Version sync check
+1. Local Vercel env dump guard (blocks pushes when `.env.vercel-backup` or `.env.vercel-export` exist in repo root)
+2. TypeScript check (src + API)
+3. CJS syntax validation
+4. Edge function esbuild bundle check
+5. Edge function import guardrail test
+6. Markdown lint
+7. MDX lint (Mintlify compatibility)
+8. Version sync check
 
 ## Deployment
 

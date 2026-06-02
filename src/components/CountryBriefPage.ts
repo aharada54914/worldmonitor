@@ -1,4 +1,5 @@
 import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
+import { formatIntelBrief } from '@/utils/format-intel-brief';
 import { t } from '@/services/i18n';
 import { getCSSColor } from '@/utils';
 import type { CountryScore } from '@/services/country-instability';
@@ -14,6 +15,8 @@ import { exportCountryBriefJSON, exportCountryBriefCSV } from '@/utils/export';
 import type { CountryBriefExport } from '@/utils/export';
 import { ME_STRIKE_BOUNDS } from '@/services/country-geometry';
 import { toFlagEmoji } from '@/utils/country-flag';
+import { setTrustedHtml, trustedHtml } from '@/utils/dom-utils';
+
 
 type BriefAssetType = AssetType | 'port';
 
@@ -92,8 +95,8 @@ export class CountryBriefPage implements CountryBriefPanel {
         const url = `${window.location.origin}/?c=${this.currentCode}`;
         navigator.clipboard.writeText(url).then(() => {
           const orig = linkShareBtn.innerHTML;
-          linkShareBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-          setTimeout(() => { linkShareBtn.innerHTML = orig; }, 1500);
+          setTrustedHtml(linkShareBtn, trustedHtml('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>', "legacy direct innerHTML migration"));
+          setTimeout(() => { setTrustedHtml(linkShareBtn, trustedHtml(orig, "legacy direct innerHTML migration")); }, 1500);
         }).catch(() => {});
         return;
       }
@@ -236,8 +239,14 @@ export class CountryBriefPage implements CountryBriefPanel {
     const chips: string[] = [];
     if (signals.criticalNews > 0) chips.push(`<span class="signal-chip conflict">🚨 ${signals.criticalNews} Critical News</span>`);
     if (signals.protests > 0) chips.push(`<span class="signal-chip protest">📢 ${signals.protests} ${t('modals.countryBrief.signals.protests')}</span>`);
-    if (signals.militaryFlights > 0) chips.push(`<span class="signal-chip military">✈️ ${signals.militaryFlights} ${t('modals.countryBrief.signals.militaryAir')}</span>`);
-    if (signals.militaryVessels > 0) chips.push(`<span class="signal-chip military">⚓ ${signals.militaryVessels} ${t('modals.countryBrief.signals.militarySea')}</span>`);
+    if (signals.militaryFlights > 0) {
+      const tip = `${signals.militaryFlights} near · ${signals.militaryFlightsInCountry} inside borders`;
+      chips.push(`<span class="signal-chip military" title="${tip}">✈️ ${signals.militaryFlights} ${t('modals.countryBrief.signals.militaryAir')}</span>`);
+    }
+    if (signals.militaryVessels > 0) {
+      const tip = `${signals.militaryVessels} near · ${signals.militaryVesselsInCountry} inside borders`;
+      chips.push(`<span class="signal-chip military" title="${tip}">⚓ ${signals.militaryVessels} ${t('modals.countryBrief.signals.militarySea')}</span>`);
+    }
     if (signals.outages > 0) chips.push(`<span class="signal-chip outage">🌐 ${signals.outages} ${t('modals.countryBrief.signals.outages')}</span>`);
     if (signals.aisDisruptions > 0) chips.push(`<span class="signal-chip outage">🚢 ${signals.aisDisruptions} AIS Disruptions</span>`);
     if (signals.satelliteFires > 0) chips.push(`<span class="signal-chip climate">🔥 ${signals.satelliteFires} Satellite Fires</span>`);
@@ -281,7 +290,7 @@ export class CountryBriefPage implements CountryBriefPanel {
 
   public showLoading(): void {
     this.currentCode = '__loading__';
-    this.overlay.innerHTML = `
+    setTrustedHtml(this.overlay, trustedHtml(`
       <div class="country-brief-page">
         <div class="cb-header">
           <div class="cb-header-left">
@@ -299,7 +308,7 @@ export class CountryBriefPage implements CountryBriefPanel {
             <span class="intel-loading-text">${t('modals.countryBrief.locating')}</span>
           </div>
         </div>
-      </div>`;
+      </div>`, "legacy direct innerHTML migration"));
     // Close button click is handled via event delegation on the overlay (set up in constructor)
     this.overlay.classList.add('active');
   }
@@ -374,7 +383,7 @@ export class CountryBriefPage implements CountryBriefPanel {
       ? `<span class="cb-tier-badge">${t('modals.countryBrief.limitedCoverage')}</span>`
       : '';
 
-    this.overlay.innerHTML = `
+    setTrustedHtml(this.overlay, trustedHtml(`
       <div class="country-brief-page">
         <div class="cb-header">
           <div class="cb-header-left">
@@ -476,7 +485,7 @@ export class CountryBriefPage implements CountryBriefPanel {
             </div>
           </div>
         </div>
-      </div>`;
+      </div>`, "legacy direct innerHTML migration"));
 
     // All button click handlers (close, share, print, export, citation, link-share) are handled
     // via event delegation on the overlay (set up in constructor)
@@ -491,18 +500,18 @@ export class CountryBriefPage implements CountryBriefPanel {
 
     if (data.error || data.skipped || !data.brief) {
       const msg = data.error || data.reason || t('modals.countryBrief.briefUnavailable');
-      section.innerHTML = `<div class="intel-error">${escapeHtml(msg)}</div>`;
+      setTrustedHtml(section, trustedHtml(`<div class="intel-error">${escapeHtml(msg)}</div>`, "legacy direct innerHTML migration"));
       return;
     }
 
     this.currentBrief = data.brief;
     const formatted = this.formatBrief(data.brief, this.currentHeadlineCount);
-    section.innerHTML = `
+    setTrustedHtml(section, trustedHtml(`
       <div class="cb-brief-text">${formatted}</div>
       <div class="cb-brief-footer">
         ${data.cached ? `<span class="intel-cached">📋 ${t('modals.countryBrief.cached')}</span>` : `<span class="intel-fresh">✨ ${t('modals.countryBrief.fresh')}</span>`}
         <span class="intel-timestamp">${data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : ''}</span>
-      </div>`;
+      </div>`, "legacy direct innerHTML migration"));
   }
 
   public updateMarkets(markets: PredictionMarket[]): void {
@@ -510,11 +519,11 @@ export class CountryBriefPage implements CountryBriefPanel {
     if (!section) return;
 
     if (markets.length === 0) {
-      section.innerHTML = `<span class="cb-empty">${t('modals.countryBrief.noMarkets')}</span>`;
+      setTrustedHtml(section, trustedHtml(`<span class="cb-empty">${t('modals.countryBrief.noMarkets')}</span>`, "legacy direct innerHTML migration"));
       return;
     }
 
-    section.innerHTML = markets.slice(0, 3).map(m => {
+    setTrustedHtml(section, trustedHtml(markets.slice(0, 3).map(m => {
       const pct = Math.round(m.yesPrice);
       const noPct = 100 - pct;
       const vol = m.volume ? `$${(m.volume / 1000).toFixed(0)}k vol` : '';
@@ -529,7 +538,7 @@ export class CountryBriefPage implements CountryBriefPanel {
           </div>
           ${vol ? `<div class="market-vol">${vol}</div>` : ''}
         </div>`;
-    }).join('');
+    }).join(''), "legacy direct innerHTML migration"));
   }
 
   public updateStock(data: StockIndexData): void {
@@ -546,7 +555,7 @@ export class CountryBriefPage implements CountryBriefPanel {
     const cls = pct >= 0 ? 'stock-up' : 'stock-down';
     const arrow = pct >= 0 ? '📈' : '📉';
     el.className = `signal-chip stock ${cls}`;
-    el.innerHTML = `${arrow} ${escapeHtml(data.indexName)}: ${sign}${data.weekChangePercent}% (1W)`;
+    setTrustedHtml(el, trustedHtml(`${arrow} ${escapeHtml(data.indexName)}: ${sign}${data.weekChangePercent}% (1W)`, "legacy direct innerHTML migration"));
   }
 
   public updateNews(headlines: NewsItem[]): void {
@@ -559,7 +568,7 @@ export class CountryBriefPage implements CountryBriefPanel {
     this.currentHeadlines = items;
     section.style.display = '';
 
-    content.innerHTML = items.map((item, i) => {
+    setTrustedHtml(content, trustedHtml(items.map((item, i) => {
       const safeUrl = sanitizeUrl(item.link);
       const threatColor = item.threat?.level === 'critical' ? getCSSColor('--threat-critical')
         : item.threat?.level === 'high' ? getCSSColor('--threat-high')
@@ -576,7 +585,7 @@ export class CountryBriefPage implements CountryBriefPanel {
         return `<a href="${safeUrl}" target="_blank" rel="noopener" class="cb-news-card" id="cb-news-${i + 1}">${cardBody}</a>`;
       }
       return `<div class="cb-news-card" id="cb-news-${i + 1}">${cardBody}</div>`;
-    }).join('');
+    }).join(''), "legacy direct innerHTML migration"));
   }
 
 
@@ -627,7 +636,7 @@ export class CountryBriefPage implements CountryBriefPanel {
       html += `</div>`;
     }
 
-    content.innerHTML = html;
+    setTrustedHtml(content, trustedHtml(html, "legacy direct innerHTML migration"));
     section.style.display = '';
   }
 
@@ -652,24 +661,7 @@ export class CountryBriefPage implements CountryBriefPanel {
   }
 
   private formatBrief(text: string, headlineCount = 0): string {
-    let html = escapeHtml(text)
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n\n/g, '</p><p>')
-      .replace(/\n/g, '<br>')
-      .replace(/^/, '<p>')
-      .replace(/$/, '</p>');
-
-    if (headlineCount > 0) {
-      html = html.replace(/\[(\d{1,2})\]/g, (_match, numStr) => {
-        const n = parseInt(numStr, 10);
-        if (n >= 1 && n <= headlineCount) {
-          return `<a href="#cb-news-${n}" class="cb-citation" title="${t('components.countryBrief.sourceRef', { n: String(n) })}">[${n}]</a>`;
-        }
-        return `[${numStr}]`;
-      });
-    }
-
-    return html;
+    return formatIntelBrief(text, headlineCount > 0 ? { count: headlineCount, hrefPrefix: '#cb-news-' } : undefined);
   }
 
   private exportBrief(format: 'json' | 'csv'): void {
